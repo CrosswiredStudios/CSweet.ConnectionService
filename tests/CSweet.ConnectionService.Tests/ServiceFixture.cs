@@ -138,6 +138,8 @@ internal sealed class FakeProvider : IProviderOAuthTransport
     public string? ExpectedChallenge; public int Exchanges; public string[]? GrantedScopes; public bool Fail;
     public Func<Task>? BeforeReceipt;
     public int Refreshes, Revocations;
+    public Exception? RevocationFailure;
+    public Action? BeforeRevocation;
     public bool FailRefresh;
     public string[]? RefreshScopes;
     public Task<ProviderTokenReceipt> Refresh(ProviderProfile profile, string secret, string token, CancellationToken ct)
@@ -147,7 +149,7 @@ internal sealed class FakeProvider : IProviderOAuthTransport
             : Task.FromResult(new ProviderTokenReceipt("refreshed-access", "rotated-refresh", 3600, RefreshScopes));
     }
     public Task<bool> Revoke(ProviderProfile profile, string secret, string token, CancellationToken ct)
-    { Revocations++; return Task.FromResult(true); }
+    { Revocations++; BeforeRevocation?.Invoke(); ct.ThrowIfCancellationRequested(); return RevocationFailure is { } failure ? Task.FromException<bool>(failure) : Task.FromResult(true); }
     public async Task<ProviderTokenReceipt> Exchange(ProviderProfile profile, string secret, string code, string verifier, string callback, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested(); Exchanges++;
