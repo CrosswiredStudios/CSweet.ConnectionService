@@ -29,7 +29,7 @@ $evidence = Get-Content -LiteralPath (Join-Path $Directory 'release-evidence.jso
 if ($evidence.packageId -cne $packageId -or $evidence.version -cne $ExpectedVersion -or
     $evidence.sourceCommit -cne $SourceCommit -or $evidence.sourceHasLocalChanges -isnot [bool] -or $evidence.sourceHasLocalChanges -or
     $evidence.packageSha256 -cne $hashed[$packageName]) { throw 'Release evidence does not match the reviewed source/package.' }
-if ((Get-Content -LiteralPath (Join-Path $Directory "$ExpectedVersion.md") -First 1) -cnotmatch ('^# ' + [regex]::Escape($ExpectedVersion) + '($| - )')) { throw 'Incorrect release notes.' }
+if ((Get-Content -LiteralPath (Join-Path $Directory "$ExpectedVersion.md") -First 1) -cnotmatch ('^# ' + [regex]::Escape($ExpectedVersion) + '($| [\u002d\u2013\u2014] )')) { throw 'Incorrect release notes.' }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $archive = [System.IO.Compression.ZipFile]::OpenRead((Join-Path (Resolve-Path -LiteralPath $Directory).Path $packageName))
 try {

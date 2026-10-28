@@ -30,7 +30,7 @@ try {
     $null = New-Item -ItemType Directory -Path $releaseDir -Force
     $packageName = "CSweet.ConnectionService.Protocol.$version.nupkg"
     $notes = "releases/$version.md"
-    if ((Get-Content -LiteralPath $notes -First 1) -cnotmatch ('^# ' + [regex]::Escape($version) + '($| - )')) { throw 'Mismatched release notes.' }
+    if ((Get-Content -LiteralPath $notes -First 1) -cnotmatch ('^# ' + [regex]::Escape($version) + '($| [\u002d\u2013\u2014] )')) { throw 'Mismatched release notes.' }
     Copy-Item -LiteralPath $path, $notes -Destination $releaseDir
     $evidence = [ordered]@{ packageId = 'CSweet.ConnectionService.Protocol'; version = $version;
         sourceCommit = (git -C $repoRoot rev-parse HEAD); sourceHasLocalChanges = @(git -C $repoRoot status --porcelain).Count -gt 0;
