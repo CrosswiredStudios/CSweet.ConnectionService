@@ -1,0 +1,17 @@
+**/bin/
+**/obj/
+artifacts/
+data/
+*.db
+*.db-shm
+*.db-wal
+*.pfx
+*.key
+*.nupkg
+*.snupkg
+.env
+.env.*
+appsettings.Local.json
+client_secret*.json
+**/client_secret*.json
+*.pem

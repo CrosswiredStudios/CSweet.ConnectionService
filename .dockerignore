@@ -1,0 +1,9 @@
+**/bin
+**/obj
+artifacts
+.git
+data
+**/*.pfx
+**/*.key
+**/*client_secret*
+**/.env*

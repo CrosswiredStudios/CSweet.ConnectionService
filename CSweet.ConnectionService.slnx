@@ -1,0 +1,8 @@
+<Solution>
+  <Project Path="src/CSweet.ConnectionService.Core/CSweet.ConnectionService.Core.csproj" />
+  <Project Path="src/CSweet.ConnectionService.OAuth/CSweet.ConnectionService.OAuth.csproj" />
+  <Project Path="src/CSweet.ConnectionService.OAuth.Google/CSweet.ConnectionService.OAuth.Google.csproj" />
+  <Project Path="src/CSweet.ConnectionService.Protocol/CSweet.ConnectionService.Protocol.csproj" />
+  <Project Path="src/CSweet.ConnectionService/CSweet.ConnectionService.csproj" />
+  <Project Path="tests/CSweet.ConnectionService.Tests/CSweet.ConnectionService.Tests.csproj" />
+</Solution>

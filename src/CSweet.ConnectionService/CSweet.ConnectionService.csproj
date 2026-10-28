@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CSweet.ConnectionService.OAuth/CSweet.ConnectionService.OAuth.csproj" />
+    <ProjectReference Include="../CSweet.ConnectionService.OAuth.Google/CSweet.ConnectionService.OAuth.Google.csproj" />
+  </ItemGroup>
+</Project>
