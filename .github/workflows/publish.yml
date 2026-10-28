@@ -1,0 +1,103 @@
+name: Protocol keyless publishing
+
+on:
+  pull_request:
+    paths: ['.github/workflows/publish.yml', 'scripts/Test-Release.ps1', 'scripts/Assert-ReleaseArtifact.ps1']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified package to nuget.org
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: protocol-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          $version = [string]([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Invalid release version.' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Test, pack and verify a fresh consumer
+        shell: pwsh
+        run: ./scripts/Test-Release.ps1
+      - name: Check exact release identity and source provenance
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/Assert-ReleaseArtifact.ps1 -Directory "artifacts/release/$env:RELEASE_VERSION" -ExpectedVersion $env:RELEASE_VERSION -SourceCommit $env:GITHUB_SHA
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: protocol-tests
+          path: artifacts/test-results/*.trx
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        id: upload
+        with:
+          name: protocol-release
+          path: artifacts/release/${{ steps.version.outputs.version }}/
+          if-no-files-found: error
+          overwrite: false
+          retention-days: 7
+
+  publish:
+    needs: verify
+    if: github.repository == 'CrosswiredStudios/CSweet.ConnectionService' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.verify.outputs.artifact_id }}
+          path: release
+          merge-multiple: true
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Recheck the immutable verified artifact before authentication
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        run: ./scripts/Assert-ReleaseArtifact.ps1 -Directory release -ExpectedVersion $env:RELEASE_VERSION -SourceCommit $env:GITHUB_SHA
+      - name: NuGet login with repository-scoped OIDC
+        uses: NuGet/login@v1
+        id: login
+        with:
+          user: CrosswiredStudios
+      - name: Publish only the verified package
+        shell: pwsh
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+          RELEASE_VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          dotnet nuget push "release/CSweet.ConnectionService.Protocol.$env:RELEASE_VERSION.nupkg" --source https://api.nuget.org/v3/index.json --api-key $env:NUGET_API_KEY

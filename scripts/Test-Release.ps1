@@ -26,5 +26,20 @@ try {
     $cache = Join-Path $repoRoot ('artifacts/consumer-packages/' + [Guid]::NewGuid().ToString('N'))
     dotnet restore tests/ProtocolConsumer/ProtocolConsumer.csproj --configfile tests/ProtocolConsumer/NuGet.Config --packages $cache --force --no-http-cache
     dotnet run --project tests/ProtocolConsumer -c Release --no-restore "-p:RestorePackagesPath=$cache"
+    $releaseDir = Join-Path $repoRoot "artifacts/release/$version"
+    $null = New-Item -ItemType Directory -Path $releaseDir -Force
+    $packageName = "CSweet.ConnectionService.Protocol.$version.nupkg"
+    $notes = "releases/$version.md"
+    if ((Get-Content -LiteralPath $notes -First 1) -cnotmatch ('^# ' + [regex]::Escape($version) + '($| - )')) { throw 'Mismatched release notes.' }
+    Copy-Item -LiteralPath $path, $notes -Destination $releaseDir
+    $evidence = [ordered]@{ packageId = 'CSweet.ConnectionService.Protocol'; version = $version;
+        sourceCommit = (git -C $repoRoot rev-parse HEAD); sourceHasLocalChanges = @(git -C $repoRoot status --porcelain).Count -gt 0;
+        packageSha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();
+        verification = @('service tests', 'package inspection', 'isolated NuGet-only consumer'); publishedByThisScript = $false }
+    [System.IO.File]::WriteAllText((Join-Path $releaseDir 'release-evidence.json'), ($evidence | ConvertTo-Json), [System.Text.UTF8Encoding]::new($false))
+    $hashes = @($packageName, "$version.md", 'release-evidence.json') | ForEach-Object {
+        "$((Get-FileHash -LiteralPath (Join-Path $releaseDir $_) -Algorithm SHA256).Hash.ToLowerInvariant())  $_"
+    }
+    [System.IO.File]::WriteAllLines((Join-Path $releaseDir 'SHA256SUMS'), $hashes, [System.Text.UTF8Encoding]::new($false))
     Write-Host "Verified local protocol package $version. Nothing was published or deployed."
 } finally { Pop-Location }
