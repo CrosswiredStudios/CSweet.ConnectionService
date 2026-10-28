@@ -46,9 +46,14 @@ public sealed class ConnectionRevocationService(ConnectionStore db, CredentialVa
                 db.Event(connection.DeploymentId, "connection.provider-revoked-primary-erased", connection.Id, connection.Revision, clock.GetUtcNow());
                 await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
             }
-            catch (Exception error) when (error is HttpRequestException or InvalidOperationException or JsonException or NotSupportedException or System.Security.Cryptography.CryptographicException ||
+            catch (Exception error) when (error is HttpRequestException or System.Net.Sockets.SocketException or UnauthorizedAccessException or
+                InvalidOperationException or JsonException or NotSupportedException or System.Security.Cryptography.CryptographicException ||
                 error is OperationCanceledException && !ct.IsCancellationRequested)
-            { /* Retain a real pending obligation, not a fabricated receipt. */ }
+            {
+                // DNS/socket failures and rejected destinations are failed revocations, never
+                // permission to bypass transport policy or claim erasure. The persisted lease,
+                // attempt count and next-attempt deadline bound the next pass. Keep credentials.
+            }
         }
     }
 }

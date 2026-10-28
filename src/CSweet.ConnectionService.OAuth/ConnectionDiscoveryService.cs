@@ -31,10 +31,11 @@ public sealed class ConnectionDiscoveryService(ConnectionStore db, CredentialVau
             var inventory = Read(connection); var account = manifest.Accounts!;
             async Task Revalidate()
             {
-                await registry.Resolve(connection.PackageDigest, ct);
+                var (_, _, activeProfile) = await registry.Resolve(connection.PackageDigest, ct);
                 var current = await db.Connections.AsNoTracking().SingleOrDefaultAsync(x => x.Id == connection.Id && x.LeaseOwner == owner &&
-                    x.Status == "AuthorizedPendingDiscovery", ct);
-                if (current is null || current.LeaseUntil <= clock.GetUtcNow() ||
+                    x.DeploymentId == deployment.Id && x.Status == "AuthorizedPendingDiscovery", ct);
+                if (current is null || current.LeaseUntil is not { } until || until <= clock.GetUtcNow() ||
+                    activeProfile.Id != current.ProfileId || activeProfile.Revision != current.ProfileRevision ||
                     !await db.Deployments.AsNoTracking().AnyAsync(x => x.Id == deployment.Id && !x.Revoked && x.Revision == deployment.Revision, ct))
                     throw new UnauthorizedAccessException();
             }
@@ -90,7 +91,15 @@ public sealed class ConnectionDiscoveryService(ConnectionStore db, CredentialVau
             var next = projection.NextPageTokenPointer is null ? null : Text(page, projection.NextPageTokenPointer, false, 2048);
             if (next is not null && (account.PageTokenInput is null || inventory.SeenPageTokens.Contains(next, StringComparer.Ordinal)))
                 throw new InvalidOperationException("Repeated discovery cursor.");
-            await Revalidate(); await db.Entry(connection).ReloadAsync(ct);
+            // No provider I/O inside this transaction. SQLite's immediate write reservation
+            // serializes the final reload, authority/lease checks, inventory and outbox save
+            // with disconnects, lease changes and registry/deployment updates. A reload must
+            // never make a revocation revision the new baseline for writing Ready.
+            await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct);
+            await db.Entry(connection).ReloadAsync(ct);
+            await Revalidate();
+            if (connection.Status != "AuthorizedPendingDiscovery" || connection.LeaseOwner != owner ||
+                connection.LeaseUntil is not { } leaseUntil || leaseUntil <= clock.GetUtcNow()) throw new UnauthorizedAccessException();
             inventory = inventory with
             {
                 Resources = resources.Values.OrderBy(x => x.Id, StringComparer.Ordinal).ToArray(),
@@ -102,8 +111,19 @@ public sealed class ConnectionDiscoveryService(ConnectionStore db, CredentialVau
             connection.SubjectHash = inventory.Subject is null ? null : DeploymentProofCodec.Hash((profile.RevocationGroup ?? profile.Id) + "\n" + inventory.Subject);
             if (next is null) { connection.Status = "Ready"; connection.InventoryVerifiedAt = clock.GetUtcNow(); }
             connection.LeaseOwner = null; connection.LeaseUntil = null; connection.Revision++;
-            db.Event(connection.DeploymentId, next is null ? "connection.ready" : "connection.discovery-progress", connection.Id, connection.Revision, clock.GetUtcNow());
-            await db.SaveChangesAsync(ct); return View(connection, inventory);
+            var notification = new ConnectionEvent { Id = Guid.NewGuid(), DeploymentId = connection.DeploymentId,
+                Kind = next is null ? "connection.ready" : "connection.discovery-progress", ConnectionId = connection.Id,
+                Revision = connection.Revision, CreatedAt = clock.GetUtcNow() };
+            db.Events.Add(notification);
+            try { await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct); }
+            catch
+            {
+                // A failed transaction leaves tracked inserts pending. Lease cleanup below
+                // must never save a readiness notification for inventory that did not commit.
+                db.Entry(notification).State = EntityState.Detached;
+                throw;
+            }
+            return View(connection, inventory);
         }
         finally
         {
