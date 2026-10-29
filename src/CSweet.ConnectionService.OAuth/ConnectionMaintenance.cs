@@ -7,6 +7,7 @@ public sealed class ConnectionMaintenance(IServiceScopeFactory scopes, TimeProvi
 {
     public static async Task Sweep(ConnectionStore db, DateTimeOffset now, CancellationToken ct)
     {
+        await db.OwnerNonces.Where(x => x.ExpiresAt < now.ToUnixTimeSeconds() - 60).ExecuteDeleteAsync(ct);
         await db.Nonces.Where(x => x.ExpiresAt < now.ToUnixTimeSeconds() - 60).ExecuteDeleteAsync(ct);
         var sessions = await db.Sessions.Where(x => x.Status == "Created" || x.Status == "AwaitingConsent" || x.Status == "Exchanging").Take(1000).ToArrayAsync(ct);
         foreach (var session in sessions.Where(x => x.ExpiresAt <= now))

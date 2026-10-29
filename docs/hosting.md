@@ -165,3 +165,6 @@ approval, request-plan enforcement, media transport and reconciliation work is i
 Complete independent security review, key/certificate rotation, proxy log inspection, per-provider
 quota controls, recovery/restore and incident procedures. Kubernetes/cloud scale-out and cloud-KMS
 adapters are not implemented by the initial single-replica hosting package.
+
+
+For version 0.4.0 owner administration without an external IdP, see [owner administration](owner-administration.md). OIDC operator routes now require explicit `EnableOidcAdministration=true`; do not assume they are enabled by setting only an issuer.

@@ -19,6 +19,7 @@ public static class OAuthCredentialImports
 {
     public static void MapOAuthCredentialImports(this IEndpointRouteBuilder endpoints)
     {
+        if (!endpoints.ServiceProvider.GetRequiredService<ServiceOptions>().EnableOidcAdministration) return;
         endpoints.MapPost("/operator/credential-imports/{format}", async (string format, ImportOAuthCredentials request,
             HttpContext context, RegistryService registry, ServiceOptions options, IEnumerable<IOAuthCredentialDocumentReader> readers,
             CancellationToken ct) =>
