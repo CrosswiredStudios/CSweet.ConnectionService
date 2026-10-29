@@ -49,7 +49,8 @@ public static class OAuthHosting
                 throw new InvalidOperationException("A current RSA encryption certificate and its private key are required.");
             protection.ProtectKeysWithCertificate(certificate);
         }
-        builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
+        builder.Services.AddAuthentication();
+        if (settings.EnableOidcAdministration) builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(o =>
         {
             o.Authority = settings.OperatorAuthority; o.Audience = settings.OperatorAudience; o.RequireHttpsMetadata = true;
             o.MapInboundClaims = false; o.SaveToken = false; o.IncludeErrorDetails = false;
@@ -70,6 +71,7 @@ public static class OAuthHosting
             o.AddPolicy("bounded", context => RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
                 _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
         });
+        builder.Services.AddScoped<OwnerControl>(); builder.Services.AddScoped<LocalOwnerAdministration>();
         builder.Services.AddScoped<CredentialVault>(); builder.Services.AddScoped<RegistryService>(); builder.Services.AddScoped<ConsentService>(); builder.Services.AddScoped<DeploymentAuthenticator>();
         builder.Services.AddSingleton<OAuthScopeConventions>();
         builder.Services.AddSingleton<IProviderOAuthTransport, PinnedProviderTransport>();
@@ -129,6 +131,8 @@ public sealed class OAuthConnectionModule : IConnectionModule
     public void MapEndpoints(IEndpointRouteBuilder app)
     {
         app.MapGet("/health", () => Results.Ok(new { status = "up", protocol = ConnectionProtocol.Version }));
+        if (app.ServiceProvider.GetRequiredService<ServiceOptions>().EnableOidcAdministration)
+        {
         var operators = app.MapGroup("/operator").RequireRateLimiting("bounded");
         operators.MapPost("/deployments", async (HttpContext c, EnrollDeployment r, RegistryService s, CancellationToken ct) => Results.Ok(await s.Enroll(c.User.FindFirst("csweet_tenant")!.Value, c.User.FindFirst("sub")!.Value, r, ct))).RequireAuthorization("enrollment");
         operators.MapPost("/deployments/{id:guid}/keys", async (Guid id, HttpContext c, RotateDeploymentKey r, RegistryService s, CancellationToken ct) => Results.Ok(await s.Rotate(c.User.FindFirst("csweet_tenant")!.Value, c.User.FindFirst("sub")!.Value, id, r, ct))).RequireAuthorization("enrollment");
@@ -137,6 +141,9 @@ public sealed class OAuthConnectionModule : IConnectionModule
         operators.MapPost("/packages", async (HttpContext c, ApprovePackage r, RegistryService s, CancellationToken ct) => { await s.Approve(c.User.FindFirst("sub")!.Value, r, ct); return Results.NoContent(); }).RequireAuthorization("operator");
         operators.MapPost("/packages/{digest}/revoke", async (string digest, HttpContext c, RegistryService s, CancellationToken ct) => { await s.RevokePackage(c.User.FindFirst("sub")!.Value, digest, ct); return Results.NoContent(); }).RequireAuthorization("operator");
         operators.MapPost("/profiles/{id}/disable", async (string id, HttpContext c, RegistryService s, CancellationToken ct) => { await s.DisableProfile(c.User.FindFirst("sub")!.Value, id, ct); return Results.NoContent(); }).RequireAuthorization("operator");
+        }
+        app.MapGet("/service-info", (ServiceOptions o) => new ConnectionServiceCapabilities(o.PublicOrigin, ConnectionProtocol.Version, true, false, false));
+        app.MapOwnerControl();
         var api = app.MapGroup("/v1").RequireRateLimiting("bounded");
         static Deployment DeploymentFor(HttpContext context) => (Deployment)context.Items["deployment"]!;
         api.MapGet("/deployment", (HttpContext c) => { var d = DeploymentFor(c); return Results.Ok(new DeploymentRegistration(d.Id, d.TenantId, d.Revision)); });

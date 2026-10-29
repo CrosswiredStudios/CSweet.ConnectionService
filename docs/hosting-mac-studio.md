@@ -133,3 +133,6 @@ Then test install → Connect account → Google consent → channel import → 
 reconnect → disconnect and independently confirm provider revocation. Use an authorized pilot account.
 The current automated tests use fake providers; no real Google connection or Mac/Cloudflare acceptance
 has been performed. Complete the remaining execution, cleanup and security acceptance work before launch.
+
+
+For version 0.4.0 owner administration without an external IdP, see [owner administration](owner-administration.md). OIDC operator routes now require explicit `EnableOidcAdministration=true`; do not assume they are enabled by setting only an issuer.

@@ -74,3 +74,6 @@ Independent operators supply their own authorized provider applications, secrets
 and administrator identity. No official C-Sweet credentials or customer data are distributed here.
 Software licensing does not identify a running service as officially operated by C-Sweet, and this
 repository makes no claim that modified forks cannot copy names or artwork.
+
+
+For version 0.4.0 owner administration without an external IdP, see [owner administration](docs/owner-administration.md). OIDC operator routes now require explicit `EnableOidcAdministration=true`; do not assume they are enabled by setting only an issuer.

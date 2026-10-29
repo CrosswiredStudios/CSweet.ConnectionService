@@ -25,6 +25,7 @@ internal class ServiceFixture : WebApplicationFactory<Program>
     public const string ReturnUri = "https://customer.example.com/api/plugin-connections/managed/return";
     public readonly string Root = Path.Combine(Path.GetTempPath(), "csweet-connections-tests", Guid.NewGuid().ToString("N"));
     public ServiceFixture(string? existingRoot = null) { if (existingRoot is not null) Root = existingRoot; }
+    public bool OidcAdministration = true;
     public readonly RSA SigningKey = RSA.Create(2048);
     public readonly ECDsa DeploymentKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     public readonly FakeProvider Provider = new(); public readonly MutableClock Clock = new();
@@ -38,6 +39,7 @@ internal class ServiceFixture : WebApplicationFactory<Program>
         builder.UseSetting("ConnectionService:PublicOrigin", Origin);
         builder.UseSetting("ConnectionService:Database", "Data Source=" + Path.Combine(Root, "connections.db"));
         builder.UseSetting("ConnectionService:KeyRingDirectory", Path.Combine(Root, "keys"));
+        builder.UseSetting("ConnectionService:EnableOidcAdministration", OidcAdministration.ToString());
         builder.UseSetting("ConnectionService:OperatorAuthority", "https://operators.example.com");
         builder.UseSetting("ConnectionService:OperatorAudience", "managed-operators");
         builder.UseSetting("ConnectionService:InitializeDevelopmentStore", "true");

@@ -12,6 +12,7 @@ public sealed class RegistryService(ConnectionStore db, CredentialVault vault, S
     {
         Guards.Id(tenantId); Guards.Id(request.KeyId); Guards.Text(request.Name, 200);
         using var key = DeploymentProofCodec.PublicKey(request.PublicKey);
+        if ((await db.OwnerBindings.Select(x => x.PublicKey).ToListAsync(ct)).Any(x => OwnerKeyIdentity.Same(x, request.PublicKey))) throw new UnauthorizedAccessException("Administrative keys cannot be customer keys.");
         if (request.ReturnUris.Count is < 1 or > 20 || request.ReturnUris.Distinct(StringComparer.Ordinal).Count() != request.ReturnUris.Count) throw new ArgumentException("Choose exact return addresses.");
         foreach (var target in request.ReturnUris) { Guards.Text(target, 2048); options.ValidateReturn(target); }
         var deployment = new Deployment
@@ -29,6 +30,7 @@ public sealed class RegistryService(ConnectionStore db, CredentialVault vault, S
     public async Task<DeploymentRegistration> Rotate(string tenantId, string actor, Guid id, RotateDeploymentKey request, CancellationToken ct)
     {
         Guards.Id(request.KeyId); using var key = DeploymentProofCodec.PublicKey(request.PublicKey);
+        if ((await db.OwnerBindings.Select(x => x.PublicKey).ToListAsync(ct)).Any(x => OwnerKeyIdentity.Same(x, request.PublicKey))) throw new UnauthorizedAccessException("Administrative keys cannot be customer keys.");
         var d = await db.Deployments.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId && !x.Revoked, ct) ?? throw new UnauthorizedAccessException();
         if (d.Revision != request.ExpectedRevision || d.KeyId == request.KeyId || d.PublicKey == request.PublicKey) throw new InvalidOperationException("Review the current deployment key.");
         d.PublicKey = request.PublicKey; d.KeyId = request.KeyId; d.Revision++;
@@ -36,14 +38,14 @@ public sealed class RegistryService(ConnectionStore db, CredentialVault vault, S
     }
     public async Task Revoke(string tenantId, string actor, Guid id, CancellationToken ct)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var d = await db.Deployments.SingleOrDefaultAsync(x => x.Id == id && x.TenantId == tenantId, ct) ?? throw new UnauthorizedAccessException();
         if (d.Revoked) return;
         d.Revoked = true; d.Revision++;
         foreach (var connection in await db.Connections.Where(x => x.DeploymentId == id && x.Status != "RevocationPending" && x.Status != "Revoked").ToArrayAsync(ct))
         { connection.Status = "RevocationPending"; connection.Revision++; db.Event(id, "connection.fenced", connection.Id, connection.Revision, clock.GetUtcNow()); }
         db.Event(id, "deployment.revoked", null, d.Revision, clock.GetUtcNow(), operatorSubject: actor); await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
     }
     public async Task<ProfileAvailability> Configure(string actor, ConfigureProvider request, CancellationToken ct)
     {
@@ -95,23 +97,23 @@ public sealed class RegistryService(ConnectionStore db, CredentialVault vault, S
     }
     public async Task RevokePackage(string actor, string digest, CancellationToken ct)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var package = await db.Packages.SingleOrDefaultAsync(x => x.Digest == digest, ct) ?? throw new UnauthorizedAccessException();
         if (package.Revoked) return;
         package.Revoked = true;
         await Fence(await db.Connections.Where(x => x.PackageDigest == digest).ToArrayAsync(ct), ct);
         db.Event(Guid.Empty, "package.revoked", null, 1, clock.GetUtcNow(), operatorSubject: actor, target: digest); await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
     }
     public async Task DisableProfile(string actor, string id, CancellationToken ct)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await using var transaction = db.Database.CurrentTransaction is null ? await db.Database.BeginTransactionAsync(ct) : null;
         var profile = await db.Profiles.SingleOrDefaultAsync(x => x.Id == id, ct) ?? throw new UnauthorizedAccessException();
         if (!profile.Enabled) return;
         profile.Enabled = false; profile.Revision++;
         await Fence(await db.Connections.Where(x => x.ProfileId == id).ToArrayAsync(ct), ct);
         db.Event(Guid.Empty, "profile.disabled", null, profile.Revision, clock.GetUtcNow(), operatorSubject: actor, target: id); await db.SaveChangesAsync(ct);
-        await transaction.CommitAsync(ct);
+        if (transaction is not null) await transaction.CommitAsync(ct);
     }
     private Task Fence(ManagedConnection[] connections, CancellationToken ct)
     {

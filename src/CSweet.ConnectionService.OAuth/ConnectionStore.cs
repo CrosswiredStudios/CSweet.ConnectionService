@@ -4,12 +4,18 @@ namespace CSweet.ConnectionService;
 
 public sealed class ConnectionStore(DbContextOptions<ConnectionStore> options) : DbContext(options)
 {
+    public DbSet<OwnerBinding> OwnerBindings => Set<OwnerBinding>();
+    public DbSet<OwnerGrant> OwnerGrants => Set<OwnerGrant>();
+    public DbSet<OwnerNonce> OwnerNonces => Set<OwnerNonce>();
     public DbSet<Deployment> Deployments => Set<Deployment>(); public DbSet<ProviderProfile> Profiles => Set<ProviderProfile>();
     public DbSet<PackageApproval> Packages => Set<PackageApproval>(); public DbSet<ConsentSession> Sessions => Set<ConsentSession>();
     public DbSet<ManagedConnection> Connections => Set<ManagedConnection>(); public DbSet<ProofNonce> Nonces => Set<ProofNonce>();
     public DbSet<ConnectionEvent> Events => Set<ConnectionEvent>();
     protected override void OnModelCreating(ModelBuilder model)
     {
+        model.Entity<OwnerBinding>().HasKey(x => x.Id); model.Entity<OwnerBinding>().Property(x => x.Revision).IsConcurrencyToken();
+        model.Entity<OwnerGrant>().HasKey(x => new { x.BindingId, x.ActorId }); model.Entity<OwnerGrant>().Property(x => x.Revision).IsConcurrencyToken();
+        model.Entity<OwnerNonce>().HasKey(x => new { x.BindingId, x.NonceHash });
         model.Entity<Deployment>().HasKey(x => x.Id); model.Entity<Deployment>().Property(x => x.Revision).IsConcurrencyToken();
         model.Entity<ProviderProfile>().HasKey(x => x.Id); model.Entity<ProviderProfile>().Property(x => x.Revision).IsConcurrencyToken();
         model.Entity<ProviderProfile>().Property(x => x.SecretVersion).IsConcurrencyToken();

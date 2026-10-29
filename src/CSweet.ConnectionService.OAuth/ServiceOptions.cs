@@ -10,6 +10,7 @@ public sealed class ServiceOptions
     public string KeyRingDirectory { get; set; } = "";
     public string ProtectionCertificatePath { get; set; } = "";
     public string ProtectionCertificatePassword { get; set; } = "";
+    public bool EnableOidcAdministration { get; set; }
     public string OperatorAuthority { get; set; } = "";
     public string OperatorAudience { get; set; } = "";
     public bool InitializeDevelopmentStore { get; set; }
@@ -21,8 +22,7 @@ public sealed class ServiceOptions
         var origin = Guards.Https(PublicOrigin);
         if (origin.AbsolutePath != "/" || PublicOrigin.EndsWith('/')) throw new InvalidOperationException("Configure an HTTPS service origin without a trailing slash.");
         if (string.IsNullOrWhiteSpace(Database) || string.IsNullOrWhiteSpace(KeyRingDirectory)) throw new InvalidOperationException("Configure persistent database and key-ring storage.");
-        Guards.Https(OperatorAuthority);
-        Guards.Text(OperatorAudience, 512);
+        if (EnableOidcAdministration) { Guards.Https(OperatorAuthority); Guards.Text(OperatorAudience, 512); }
         if (!development && (InitializeDevelopmentStore || AllowDevelopmentLoopbackReturns || string.IsNullOrWhiteSpace(ProtectionCertificatePath)))
             throw new InvalidOperationException("Production requires encrypted durable keys and an explicitly initialized store.");
     }
