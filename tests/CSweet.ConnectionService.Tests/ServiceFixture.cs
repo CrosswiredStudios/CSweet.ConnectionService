@@ -23,6 +23,9 @@ internal class ServiceFixture : WebApplicationFactory<Program>
 {
     public const string Origin = "https://connections.example.com";
     public const string ReturnUri = "https://customer.example.com/api/plugin-connections/managed/return";
+    public string EnrolledReturnUri { get; init; } = ReturnUri;
+    public string[] LocalBrowserReturns { get; init; } = [];
+    public IHttpClientFactory? OutboundClients { get; init; }
     public readonly string Root = Path.Combine(Path.GetTempPath(), "csweet-connections-tests", Guid.NewGuid().ToString("N"));
     public ServiceFixture(string? existingRoot = null) { if (existingRoot is not null) Root = existingRoot; }
     public bool OidcAdministration = true;
@@ -43,8 +46,10 @@ internal class ServiceFixture : WebApplicationFactory<Program>
         builder.UseSetting("ConnectionService:OperatorAuthority", "https://operators.example.com");
         builder.UseSetting("ConnectionService:OperatorAudience", "managed-operators");
         builder.UseSetting("ConnectionService:InitializeDevelopmentStore", "true");
+        for (var i = 0; i < LocalBrowserReturns.Length; i++) builder.UseSetting($"ConnectionService:AllowedLocalBrowserReturnUris:{i}", LocalBrowserReturns[i]);
         builder.ConfigureServices(services =>
         {
+            if (OutboundClients is not null) { services.RemoveAll<IHttpClientFactory>(); services.AddSingleton(OutboundClients); }
             services.AddSingleton<ILoggerProvider>(Logs);
             services.RemoveAll<IProviderOAuthTransport>(); services.AddSingleton<IProviderOAuthTransport>(Provider);
             services.RemoveAll<TimeProvider>(); services.AddSingleton<TimeProvider>(Clock);
@@ -76,14 +81,14 @@ internal class ServiceFixture : WebApplicationFactory<Program>
         Digest = DeploymentProofCodec.Hash("reviewed-package:" + Manifest);
         var approved = await Http.PostAsJsonAsync("/operator/packages", new ApprovePackage(Digest, DeploymentProofCodec.Hash(Manifest), Manifest, ProfileId, 1, "https://github.com/example/connector", new string('a', 40)));
         approved.EnsureSuccessStatusCode();
-        var enrollment = await Http.PostAsJsonAsync("/operator/deployments", new EnrollDeployment("Customer instance", DeploymentProofCodec.Encode(DeploymentKey.ExportSubjectPublicKeyInfo()), "key-1", [ReturnUri]));
+        var enrollment = await Http.PostAsJsonAsync("/operator/deployments", new EnrollDeployment("Customer instance", DeploymentProofCodec.Encode(DeploymentKey.ExportSubjectPublicKeyInfo()), "key-1", [EnrolledReturnUri]));
         enrollment.EnsureSuccessStatusCode(); Deployment = (await enrollment.Content.ReadFromJsonAsync<DeploymentRegistration>())!;
     }
     public BeginConnection BeginRequest(string[]? sets = null)
     {
         using var json = JsonDocument.Parse(Manifest); var root = json.RootElement;
         return new(Guid.NewGuid(), Guid.NewGuid(), "human-correlation", Digest, root.GetProperty("accounts").GetProperty("connection").GetString()!, sets ?? ["base"],
-            root.GetProperty("accounts").GetProperty("policyVersion").GetString()!, true, ReturnUri, DeploymentProofCodec.Challenge(ReturnVerifier));
+            root.GetProperty("accounts").GetProperty("policyVersion").GetString()!, true, EnrolledReturnUri, DeploymentProofCodec.Challenge(ReturnVerifier));
     }
     public ManagedConnectionClient Client() => new(Http, new(Origin), Deployment.DeploymentId, "key-1", Deployment.Revision, DeploymentKey, Clock);
     public HttpRequestMessage Signed(string path, object? body = null, DeploymentProof? overrideProof = null, ECDsa? key = null)
@@ -112,7 +117,7 @@ internal class ServiceFixture : WebApplicationFactory<Program>
         using var request = new HttpRequestMessage(HttpMethod.Get, "/oauth/callback/" + ProfileId + "?state=" + Uri.EscapeDataString(state) + (error is null ? "&code=one-time-code" : "&error=" + error));
         request.Headers.Add("Cookie", cookie);
         using var response = await Http.SendAsync(request); Assert.Equal(System.Net.HttpStatusCode.Redirect, response.StatusCode);
-        Assert.Equal(ReturnUri, response.Headers.Location!.GetLeftPart(UriPartial.Path));
+        Assert.Equal(EnrolledReturnUri, response.Headers.Location!.GetLeftPart(UriPartial.Path));
         Assert.Equal("", response.Headers.Location.Query);
         return Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(response.Headers.Location.Fragment[1..])["handoff"].ToString();
     }
@@ -138,6 +143,7 @@ internal sealed class MutableClock : TimeProvider
 internal sealed class FakeProvider : IProviderOAuthTransport
 {
     public string? ExpectedChallenge; public int Exchanges; public string[]? GrantedScopes; public bool Fail;
+    public string? LastCallback;
     public Func<Task>? BeforeReceipt;
     public int Refreshes, Revocations;
     public Exception? RevocationFailure;
@@ -154,7 +160,7 @@ internal sealed class FakeProvider : IProviderOAuthTransport
     { Revocations++; BeforeRevocation?.Invoke(); ct.ThrowIfCancellationRequested(); return RevocationFailure is { } failure ? Task.FromException<bool>(failure) : Task.FromResult(true); }
     public async Task<ProviderTokenReceipt> Exchange(ProviderProfile profile, string secret, string code, string verifier, string callback, CancellationToken ct)
     {
-        ct.ThrowIfCancellationRequested(); Exchanges++;
+        ct.ThrowIfCancellationRequested(); Exchanges++; LastCallback = callback;
         Assert.Equal("application-secret", secret); Assert.Equal("one-time-code", code); Assert.Equal(ExpectedChallenge, DeploymentProofCodec.Challenge(verifier));
         Assert.EndsWith("/oauth/callback/" + profile.Id, callback);
         if (BeforeReceipt is not null) await BeforeReceipt();

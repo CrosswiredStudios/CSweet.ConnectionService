@@ -19,6 +19,7 @@ public sealed class ConsentService(ConnectionStore db, RegistryService registry,
         await Active(deployment.Id, deployment.Revision, ct);
         if (request.LocalAttemptId == Guid.Empty || request.InstallationId == Guid.Empty) throw new ArgumentException("Attempt and installation are required.");
         Guards.Text(request.ActorId, 200); Guards.Text(request.ReturnUri, 2048);
+        options.ValidateReturn(request.ReturnUri);
         if (request.ReturnChallenge.Length != 43 || DeploymentProofCodec.Decode(request.ReturnChallenge).Length != 32 ||
             !JsonSerializer.Deserialize<string[]>(deployment.ReturnUrisJson)!.Contains(request.ReturnUri, StringComparer.Ordinal)) throw new UnauthorizedAccessException();
         var (_, manifest, _) = await registry.Resolve(request.PackageDigest, ct); var declaration = manifest.Connections.Single();
@@ -63,6 +64,7 @@ public sealed class ConsentService(ConnectionStore db, RegistryService registry,
         var session = await db.Sessions.SingleOrDefaultAsync(x => x.LaunchHash == hash && x.Status == "Created", ct) ?? throw new UnauthorizedAccessException();
         await Active(session.DeploymentId, null, ct);
         if (session.ExpiresAt <= clock.GetUtcNow()) throw new UnauthorizedAccessException();
+        options.ValidateReturn(session.ReturnUri);
         var (_, manifest, profile) = await registry.Resolve(session.PackageDigest, ct);
         var browser = DeploymentProofCodec.Random(); var verifier = DeploymentProofCodec.Random();
         var state = vault.Seal("oauth-state", JsonSerializer.Serialize(new OAuthState(session.Id, profile.Id, session.ExpiresAt.ToUnixTimeSeconds(), DeploymentProofCodec.Random())));
@@ -101,6 +103,7 @@ public sealed class ConsentService(ConnectionStore db, RegistryService registry,
         await Active(session.DeploymentId, null, ct);
         if (session.ExpiresAt <= clock.GetUtcNow() || browser is null || !DeploymentProofCodec.Equal(session.BrowserHash, DeploymentProofCodec.Hash(browser)) ||
             !DeploymentProofCodec.Equal(session.StateHash, DeploymentProofCodec.Hash(state))) throw new UnauthorizedAccessException();
+        options.ValidateReturn(session.ReturnUri);
         var (_, manifest, profile) = await registry.Resolve(session.PackageDigest, ct);
         session.Status = "Exchanging"; session.Revision++;
         db.Event(session.DeploymentId, "consent.exchanging", null, session.Revision, clock.GetUtcNow(), session.Id);
