@@ -14,24 +14,23 @@ public sealed class ServiceOptions
     public string OperatorAuthority { get; set; } = "";
     public string OperatorAudience { get; set; } = "";
     public bool InitializeDevelopmentStore { get; set; }
+    // Retained to fail closed for older configurations instead of silently accepting them.
     public bool AllowDevelopmentLoopbackReturns { get; set; }
+    public string[] AllowedLocalBrowserReturnUris { get; set; } = [];
     public string[] KnownProxyAddresses { get; set; } = [];
     public string Callback(string profileId) => PublicOrigin + "/oauth/callback/" + Uri.EscapeDataString(profileId);
     public void Validate(bool development)
     {
+        if (AllowDevelopmentLoopbackReturns) throw new InvalidOperationException("Replace AllowDevelopmentLoopbackReturns with exact HTTPS AllowedLocalBrowserReturnUris.");
+        BrowserReturnPolicy.ValidateConfiguration(AllowedLocalBrowserReturnUris);
         var origin = Guards.Https(PublicOrigin);
         if (origin.AbsolutePath != "/" || PublicOrigin.EndsWith('/')) throw new InvalidOperationException("Configure an HTTPS service origin without a trailing slash.");
         if (string.IsNullOrWhiteSpace(Database) || string.IsNullOrWhiteSpace(KeyRingDirectory)) throw new InvalidOperationException("Configure persistent database and key-ring storage.");
         if (EnableOidcAdministration) { Guards.Https(OperatorAuthority); Guards.Text(OperatorAudience, 512); }
-        if (!development && (InitializeDevelopmentStore || AllowDevelopmentLoopbackReturns || string.IsNullOrWhiteSpace(ProtectionCertificatePath)))
+        if (!development && (InitializeDevelopmentStore || string.IsNullOrWhiteSpace(ProtectionCertificatePath)))
             throw new InvalidOperationException("Production requires encrypted durable keys and an explicitly initialized store.");
     }
-    public void ValidateReturn(string target)
-    {
-        if (AllowDevelopmentLoopbackReturns && Uri.TryCreate(target, UriKind.Absolute, out var uri) && uri.IsLoopback &&
-            uri.Scheme is "http" or "https" && string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment)) return;
-        _ = Guards.Https(target);
-    }
+    public void ValidateReturn(string target) => BrowserReturnPolicy.Validate(target, AllowedLocalBrowserReturnUris);
 }
 public static partial class Guards
 {

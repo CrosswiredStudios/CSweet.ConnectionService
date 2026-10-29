@@ -67,6 +67,10 @@ operator tokens, private keys, certificates or real account data. OAuth guidance
 [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html) and
 [Google credential storage](https://developers.google.com/identity/protocols/oauth2/resources/best-practices).
 
+For a private Headquarters browser UI, see the default-off
+[exact local HTTPS browser-return policy](docs/local-browser-returns.md). This is not an arbitrary
+HTTP loopback exception for native OAuth applications; the provider callback stays at the public service.
+
 ## License and independent hosting
 
 The source and protocol package are licensed under [MIT](LICENSE), copyright 2026 C-Sweet.

@@ -126,7 +126,9 @@ cover secret storage, incremental consent and revocation.
 Publish the reviewed protocol package before distributing the updated host. Configure the host's
 managed service origin as `https://connections.c-sweet.com` and its exact UI return address as
 `https://YOUR-CSWEET-UI/settings/plugins/managed-return`. Pair it through `/settings/connections`
-using the authenticated enrollment steps in the main runbook. Approve the actual immutable connector
+using the authenticated enrollment steps in the main runbook. A local HTTPS Headquarters UI can use
+the explicit [local browser-return policy](local-browser-returns.md) without becoming publicly hosted.
+Approve the actual immutable connector
 digest/profile binding centrally; merely configuring Google's credentials is not package approval.
 
 Then test install → Connect account → Google consent → channel import → explicit business sharing →

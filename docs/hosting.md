@@ -145,10 +145,12 @@ Google access/refresh tokens never go into this file or the host configuration.
    returns an opaque handoff. C-Sweet checks the original human/browser and redeems it over the signed
    backchannel, then imports sanitized resources. Sharing with businesses/agents is still separate.
 
-Use HTTPS returns in production. For a development-only localhost UI, explicitly enable
-`ConnectionService__AllowDevelopmentLoopbackReturns=true` in a Development service environment and
-enroll the exact localhost return URI. This exception does not relax public provider endpoint/DNS
-validation, production callbacks, or proof requirements.
+Use HTTPS returns. A service owner can explicitly allow an exact local HTTPS browser return without
+exposing Headquarters publicly or switching the service to Development. See
+[local browser returns](local-browser-returns.md) for the default-off allowlist and independent exact
+deployment enrollment. The older `AllowDevelopmentLoopbackReturns=true` switch now fails startup;
+replace it with reviewed exact HTTPS entries. HTTP and arbitrary loopback ports are not supported.
+Public provider endpoint/DNS validation, the Google callback and proof requirements are unchanged.
 
 Customer-owned profiles may be explicitly listed under
 `CSweet:PluginConnections:Managed:CustomerOwnedProfiles`. They use the independent local vault-backed
