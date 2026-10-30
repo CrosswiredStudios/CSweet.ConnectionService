@@ -170,6 +170,37 @@ public class LocalProviderSetupTests
         Assert.Contains("Local provider setup failed.",duplicate.Error);Assert.DoesNotContain(Secret,duplicate.Error);
         var forbidden=await Run("--migrate-store","true");Assert.Equal(1,forbidden.Exit);Assert.Empty(forbidden.Out);
         Assert.Equal(1,await f.Db(db=>db.Events.CountAsync(x=>x.Kind=="profile.configured")));
+        if(!OperatingSystem.IsWindows())
+        {
+            System.IO.File.Delete(commandPath);Assert.Equal(0,MakeFifo(commandPath,0x180));
+            var fifo=await Run();Assert.Equal(1,fifo.Exit);Assert.Empty(fifo.Out);
+            Assert.Contains("Local provider setup failed.",fifo.Error);
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("libc", EntryPoint="mkfifo", SetLastError=true)]
+    private static extern int MakeFifo([System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.LPUTF8Str)] string path,uint mode);
+
+    [Fact]
+    public async Task UnixFifoWithoutWriterIsRejectedWithoutBlocking()
+    {
+        if(OperatingSystem.IsWindows()) return;
+        await using var f=new ServiceFixture();f.Http=f.NewClient();
+        var path=Path.Combine(f.Root,"no-writer.fifo");Assert.Equal(0,MakeFifo(path,0x180));
+        try
+        {
+            var task=Task.Run(()=>LocalSetupFiles.Read(path,65536,default));
+            await Assert.ThrowsAsync<ArgumentException>(async ()=>await task.WaitAsync(TimeSpan.FromSeconds(3)));
+        }
+        finally {System.IO.File.Delete(path);}
+    }
+    [Fact]
+    public async Task UnixDeviceAndDirectoryAreRejected()
+    {
+        if(OperatingSystem.IsWindows()) return;
+        await Assert.ThrowsAsync<ArgumentException>(()=>LocalSetupFiles.Read("/dev/null",65536,default));
+        await using var f=new ServiceFixture();f.Http=f.NewClient();
+        await Assert.ThrowsAsync<ArgumentException>(()=>LocalSetupFiles.Read(f.Root,65536,default));
     }
 
 }

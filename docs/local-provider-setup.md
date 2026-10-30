@@ -13,7 +13,10 @@ permissions and optional OIDC routes are unchanged. Keep the service origin, sto
 settings identical to the running service. Run under its OS account; do not run with an administrator's
 unrelated configuration/key ring. First-time schema setup remains a separate approved operation.
 
-All input files must be absolute paths to regular files. On Unix, use owner-only `0600` or root-owned,
+All input files must be absolute paths to regular files. Linux (with `statx`) and macOS
+open inputs nonblocking and check the opened descriptor type before reading, rejecting FIFOs and
+devices even when permissions look private. Unsupported native type checks fail closed; no fallback
+opens an unchecked Unix stream. On Unix, use owner-only `0600` or root-owned,
 service-group-readable `0640`; other-user access and group writes are rejected. Keep input directories
 under trusted local administrator control. On Windows, the operator must restrict ACLs to the service
 identity and administrators; Unix mode checks do not establish Windows ACL safety. Never put JSON,

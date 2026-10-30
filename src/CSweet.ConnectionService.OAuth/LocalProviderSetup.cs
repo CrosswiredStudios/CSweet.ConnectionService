@@ -37,7 +37,8 @@ public static class LocalSetupFiles
         var info = new FileInfo(path);
         if (info.LinkTarget is not null || (info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
             throw new ArgumentException("Use a regular local file.");
-        await using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+        ct.ThrowIfCancellationRequested();
+        await using var file = LocalSetupFileHandle.Open(path);
         if (!OperatingSystem.IsWindows())
         {
             var mode = File.GetUnixFileMode(file.SafeFileHandle);
