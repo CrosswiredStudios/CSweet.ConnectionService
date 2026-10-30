@@ -72,6 +72,7 @@ public static class OAuthHosting
                 _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
         });
         builder.Services.AddScoped<OwnerControl>(); builder.Services.AddScoped<LocalOwnerAdministration>();
+        builder.Services.AddScoped<LocalProviderSetup>();
         builder.Services.AddScoped<CredentialVault>(); builder.Services.AddScoped<RegistryService>(); builder.Services.AddScoped<ConsentService>(); builder.Services.AddScoped<DeploymentAuthenticator>();
         builder.Services.AddSingleton<OAuthScopeConventions>();
         builder.Services.AddSingleton<IProviderOAuthTransport, PinnedProviderTransport>();

@@ -2,6 +2,34 @@ using CSweet.ConnectionService;
 using CSweet.ConnectionService.Core;
 using CSweet.ConnectionService.OAuth.Google;
 
+if (args.Contains("--local-setup", StringComparer.Ordinal))
+{
+    // Do not start HTTP or accept migration/owner-admin switches in a setup invocation.
+    // All startup, parser and provider failures use one fixed secret-safe diagnostic.
+    try
+    {
+        var flags = new Dictionary<string, string>(StringComparer.Ordinal);
+        for (var i = 0; i < args.Length; i += 2)
+        {
+            if (i + 1 >= args.Length || args[i] is not ("--local-setup" or "--contentRoot") || !flags.TryAdd(args[i], args[i + 1]))
+                throw new ArgumentException();
+        }
+        var setupBuilder = WebApplication.CreateBuilder(args);
+        setupBuilder.Logging.ClearProviders();
+        setupBuilder.AddManagedOAuth(); setupBuilder.Services.AddGoogleOAuthSupport();
+        await using var setupApp = setupBuilder.Build();
+        if (!setupApp.Environment.IsProduction()) throw new InvalidOperationException();
+        await setupApp.InitializeManagedOAuth([]);
+        var bytes = await LocalSetupFiles.Read(flags["--local-setup"], 65536, default);
+        var command = LocalSetupCommand.Parse(bytes);
+        await using var scope = setupApp.Services.CreateAsyncScope();
+        var result = await scope.ServiceProvider.GetRequiredService<LocalProviderSetup>().Execute(command, default);
+        Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(result));
+    }
+    catch { Console.Error.WriteLine("Local provider setup failed. Check protected files, reviewed identity and current revisions. Do not retry without checking committed state."); Environment.ExitCode = 1; }
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 builder.AddManagedOAuth();
 builder.Services.AddGoogleOAuthSupport();

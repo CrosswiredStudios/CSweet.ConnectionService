@@ -15,3 +15,7 @@ The owner API uses existing signed proof primitives with a distinct header, audi
 Credential import is typed and returns only public availability metadata. Never log request bodies, put credential documents in command arguments, or enable HTTP body tracing. The C-Sweet UI checks Identity sessions, current roles and CSRF before signing. This pilot does not implement mobile pairing, general provider actions, or centralized action approval.
 
 Live storage/permissions, grants, launchd, routing/DNS and Google credentials remain separate operator deployment decisions. No live configuration is included in this change.
+
+For credential imports and connector approval using local OS authority without adding global owner
+permissions, see [local provider setup](local-provider-setup.md). Live imports and approvals require
+separate review of the exact credential source and immutable package/profile binding.
