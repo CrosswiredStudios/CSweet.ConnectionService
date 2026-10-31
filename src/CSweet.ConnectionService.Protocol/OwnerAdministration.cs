@@ -49,7 +49,7 @@ public sealed class OwnerAdministrationClient(HttpClient http, OwnerRegistration
         request.Headers.Add(OwnerProtocol.ProofHeader, DeploymentProofCodec.Sign(proof, key));
         request.Content = new ByteArrayContent(bytes); request.Content.Headers.ContentType = new("application/json");
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!response.IsSuccessStatusCode) throw new HttpRequestException("Owner operation not accepted; check state before retrying.", null, response.StatusCode);
+        if (!response.IsSuccessStatusCode) throw new OwnerOperationException(response.StatusCode, OwnerFailureDiagnostic.Read(response.Headers, response.StatusCode));
         await using var input = await response.Content.ReadAsStreamAsync(ct); using var output = new MemoryStream(); var buffer = new byte[8192];
         int count; while ((count = await input.ReadAsync(buffer, ct)) != 0) { if (output.Length + count > ConnectionProtocol.MaximumBodyBytes) throw new InvalidOperationException("Result exceeds limit."); output.Write(buffer, 0, count); }
         return JsonSerializer.Deserialize<T>(output.ToArray(), DeploymentProofCodec.Json) ?? throw new InvalidOperationException("Empty result.");

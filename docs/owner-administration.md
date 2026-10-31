@@ -1,5 +1,16 @@
 # Self-hosted owner administration
 
+Version 0.5.0 adds optional content-free failure diagnostics in `X-CSweet-Owner-Diagnostic`.
+The service generates a correlation ID and emits only fixed stage/code/type labels, HTTP status
+and bounded elapsed time. Public authorization failures always use the generic authorization stage
+and `UnauthorizedAccessException` type, preventing a binding/signature-check oracle. Protected
+server diagnostics retain the fixed actual exception type.
+The Protocol client accepts only the versioned canonical format and known labels; malformed or
+absent metadata is ignored. Failure bodies are never read or forwarded. Existing clients still
+receive the same failure bodies, and new clients support services without diagnostics.
+These hints do not prove a mutation rolled back and never authorize an automatic retry.
+This feature does not change log destinations or enable body/header/exception-message logging.
+
 Version 0.4.0 adds a separate owner control plane. It does not require an external identity provider. `EnableOidcAdministration` defaults to false; existing deployments that intentionally use `/operator` must explicitly enable it and keep valid OperatorAuthority/OperatorAudience configuration. Existing customer `/v1` proofs and Google OAuth consent remain unchanged.
 
 Before starting version 0.4.0, back up protected SQLite/key storage and run the existing explicit `--migrate-store` operation. OwnerBinding, OwnerGrant and OwnerNonce are added atomically. No default owner or capability is granted by migration.

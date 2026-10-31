@@ -111,6 +111,7 @@ public sealed class OwnerControl(ConnectionStore db, ServiceOptions options, Reg
 {
     public async Task<object> Execute(HttpContext context, string action, CancellationToken ct)
     {
+        OwnerFailureScope.SetStage(context, "authorization");
         // One write transaction serializes authority changes, nonce use, mutations and their audit events.
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         var header = context.Request.Headers[OwnerProtocol.ProofHeader];
@@ -123,9 +124,11 @@ public sealed class OwnerControl(ConnectionStore db, ServiceOptions options, Reg
         if (binding.ServiceOrigin != options.PublicOrigin || proof.Audience != options.PublicOrigin + OwnerProtocol.AudienceSuffix || proof.KeyId != binding.KeyId || proof.DeploymentRevision != binding.Revision ||
             proof.Method != "POST" || context.Request.Method != "POST" || proof.PathAndQuery != context.Request.PathBase + context.Request.Path + context.Request.QueryString ||
             proof.IssuedAt > now + 5 || proof.IssuedAt < now - 30 || proof.ExpiresAt <= now || proof.ExpiresAt > proof.IssuedAt + 30 || proof.ExpiresAt <= proof.IssuedAt || proof.Nonce is not { Length: >= 43 and <= 64 }) throw new UnauthorizedAccessException();
+        OwnerFailureScope.SetStage(context, "envelope");
         using var buffer = new MemoryStream(); var chunk = new byte[8192]; int count;
         while ((count = await context.Request.Body.ReadAsync(chunk, ct)) > 0) { if (buffer.Length + count > ConnectionProtocol.MaximumBodyBytes) throw new ArgumentException("Request exceeds limit."); buffer.Write(chunk, 0, count); }
         if (!DeploymentProofCodec.Equal(proof.BodySha256, DeploymentProofCodec.Hash(buffer.ToArray()))) throw new UnauthorizedAccessException();
+        OwnerFailureScope.SetStage(context, "envelope");
         using var document = JsonDocument.Parse(buffer.ToArray()); RegistryService.CheckDuplicates(document.RootElement);
         var envelope = document.RootElement.Deserialize<OwnerRequest<JsonElement>>(DeploymentProofCodec.Json) ?? throw new ArgumentException("Missing request.");
         var grant = await db.OwnerGrants.SingleOrDefaultAsync(x => x.BindingId == binding.Id && x.ActorId == envelope.ActorId && !x.Revoked, ct) ?? throw new UnauthorizedAccessException();
@@ -136,8 +139,8 @@ public sealed class OwnerControl(ConnectionStore db, ServiceOptions options, Reg
         db.OwnerNonces.Add(new() { BindingId = binding.Id, NonceHash = DeploymentProofCodec.Hash(proof.Nonce), ExpiresAt = proof.ExpiresAt });
         await db.SaveChangesAsync(ct); // Unique nonce constraint, still inside transaction.
         var actor = "owner:" + binding.Id.ToString("D") + "/user:" + grant.ActorId.ToString("D");
-        T Payload<T>() => envelope.Payload.Deserialize<T>(DeploymentProofCodec.Json) ?? throw new ArgumentException("Missing payload.");
-        void Tenant(string tenant) { Guards.Id(tenant); if (grant.TenantScope != "*" && grant.TenantScope != tenant) throw new UnauthorizedAccessException(); }
+        T Payload<T>() { OwnerFailureScope.SetStage(context, "payload"); return envelope.Payload.Deserialize<T>(DeploymentProofCodec.Json) ?? throw new ArgumentException("Missing payload."); }
+        void Tenant(string tenant) { OwnerFailureScope.SetStage(context, "tenant"); Guards.Id(tenant); if (grant.TenantScope != "*" && grant.TenantScope != tenant) throw new UnauthorizedAccessException(); }
         object result;
         switch (action)
         {
@@ -152,12 +155,14 @@ public sealed class OwnerControl(ConnectionStore db, ServiceOptions options, Reg
                 await registry.Approve(actor, Payload<ApprovePackage>(), ct); result = new OwnerAccepted(true); break;
             case "deployments/enroll":
                 var enroll = Payload<OwnerEnrollment>(); Tenant(enroll.TenantId);
-                result = await registry.Enroll(enroll.TenantId, actor, enroll.Deployment, ct); break;
+                OwnerFailureScope.SetStage(context, "enrollment");
+                result = await registry.Enroll(enroll.TenantId, actor, enroll.Deployment, ct, stage => OwnerFailureScope.SetStage(context, stage)); break;
             case "deployments/revoke":
                 var revoke = Payload<OwnerRevocation>(); Tenant(revoke.TenantId);
                 await registry.Revoke(revoke.TenantId, actor, revoke.DeploymentId, ct); result = new OwnerAccepted(true); break;
             default: throw new ArgumentException("Unknown operation.");
         }
+        OwnerFailureScope.SetStage(context, "persistence");
         db.Event(binding.Id, "owner.request." + action.Replace('/', '.'), null, grant.Revision, clock.GetUtcNow(), operatorSubject: actor, target: grant.TenantScope);
         await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return result;
     }
