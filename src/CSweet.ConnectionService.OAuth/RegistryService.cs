@@ -8,13 +8,18 @@ namespace CSweet.ConnectionService;
 
 public sealed class RegistryService(ConnectionStore db, CredentialVault vault, ServiceOptions options, TimeProvider clock)
 {
-    public async Task<DeploymentRegistration> Enroll(string tenantId, string actor, EnrollDeployment request, CancellationToken ct)
+    public async Task<DeploymentRegistration> Enroll(string tenantId, string actor, EnrollDeployment request, CancellationToken ct, Action<string>? stage = null)
     {
-        Guards.Id(tenantId); Guards.Id(request.KeyId); Guards.Text(request.Name, 200);
+        stage?.Invoke("tenant"); Guards.Id(tenantId);
+        stage?.Invoke("key-id"); Guards.Id(request.KeyId);
+        stage?.Invoke("name"); Guards.Text(request.Name, 200);
+        stage?.Invoke("public-key");
         using var key = DeploymentProofCodec.PublicKey(request.PublicKey);
         if ((await db.OwnerBindings.Select(x => x.PublicKey).ToListAsync(ct)).Any(x => OwnerKeyIdentity.Same(x, request.PublicKey))) throw new UnauthorizedAccessException("Administrative keys cannot be customer keys.");
+        stage?.Invoke("return");
         if (request.ReturnUris.Count is < 1 or > 20 || request.ReturnUris.Distinct(StringComparer.Ordinal).Count() != request.ReturnUris.Count) throw new ArgumentException("Choose exact return addresses.");
         foreach (var target in request.ReturnUris) { Guards.Text(target, 2048); options.ValidateReturn(target); }
+        stage?.Invoke("persistence");
         var deployment = new Deployment
         {
             Id = Guid.NewGuid(),

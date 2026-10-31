@@ -51,7 +51,7 @@ public class OwnerControlTests
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256); using var wrong = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var registration = await Local<OwnerRegistration>(f, Bootstrap(key));
         var client = Client(f, change == "audience" ? registration with { ServiceOrigin = "https://other.example.com" } : registration, change == "key" ? wrong : key);
-        await Assert.ThrowsAsync<HttpRequestException>(() => client.Enroll(change == "actor" ? Guid.NewGuid() : Actor, change == "revision" ? 999 : 1, Enrollment(change == "tenant" ? "tenant-b" : "tenant-a")));
+        await Assert.ThrowsAnyAsync<HttpRequestException>(() => client.Enroll(change == "actor" ? Guid.NewGuid() : Actor, change == "revision" ? 999 : 1, Enrollment(change == "tenant" ? "tenant-b" : "tenant-a")));
         Assert.Equal(0, await f.Db(db => db.Deployments.CountAsync()));
     }
     [Fact]
@@ -61,14 +61,14 @@ public class OwnerControlTests
         var command = Bootstrap(f.DeploymentKey);
         await Assert.ThrowsAsync<InvalidOperationException>(() => Local<object>(f, command));
         var customer = new OwnerRegistration(f.Deployment.DeploymentId, ServiceFixture.Origin, "key-1", 1);
-        await Assert.ThrowsAsync<HttpRequestException>(() => Client(f, customer, f.DeploymentKey).Access(Actor));
+        await Assert.ThrowsAnyAsync<HttpRequestException>(() => Client(f, customer, f.DeploymentKey).Access(Actor));
     }
     [Fact]
     public async Task OwnerKeyCannotBecomeCustomerAndFailedMutationRollsBackNonceAndAudit()
     {
         await using var f = new ServiceFixture { OidcAdministration = false }; f.Http = f.NewClient();
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256); var command = Bootstrap(key); var registration = await Local<OwnerRegistration>(f, command);
-        await Assert.ThrowsAsync<HttpRequestException>(() => Client(f, registration, key).Enroll(Actor, 1, new("tenant-a", new("Bad", command.PublicKey!, "key", [ServiceFixture.ReturnUri]))));
+        await Assert.ThrowsAnyAsync<HttpRequestException>(() => Client(f, registration, key).Enroll(Actor, 1, new("tenant-a", new("Bad", command.PublicKey!, "key", [ServiceFixture.ReturnUri]))));
         Assert.Equal(0, await f.Db(db => db.OwnerNonces.CountAsync()));
         Assert.Equal(1, await f.Db(db => db.Events.CountAsync()));
     }
@@ -99,12 +99,12 @@ public class OwnerControlTests
         await using var f = new ServiceFixture { OidcAdministration = false }; f.Http = f.NewClient();
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256); var command = Bootstrap(key); var registration = await Local<OwnerRegistration>(f, command); var client = Client(f, registration, key);
         await Local<object>(f, command with { Action = "revoke-grant", ExpectedRevision = 1 });
-        await Assert.ThrowsAsync<HttpRequestException>(() => client.Access(Actor));
+        await Assert.ThrowsAnyAsync<HttpRequestException>(() => client.Access(Actor));
         await Local<object>(f, command with { Action = "grant", ExpectedRevision = 2 });
-        await Assert.ThrowsAsync<HttpRequestException>(() => client.Enroll(Actor, 1, Enrollment()));
+        await Assert.ThrowsAnyAsync<HttpRequestException>(() => client.Enroll(Actor, 1, Enrollment()));
         Assert.Equal(3, (await client.Access(Actor)).GrantRevision);
         await Local<object>(f, command with { Action = "revoke-binding", ExpectedRevision = 1 });
-        await Assert.ThrowsAsync<HttpRequestException>(() => client.Access(Actor));
+        await Assert.ThrowsAnyAsync<HttpRequestException>(() => client.Access(Actor));
         using var replacement = ECDsa.Create(ECCurve.NamedCurves.nistP256); var recovered = await Local<OwnerRegistration>(f, Bootstrap(replacement));
         Assert.NotEqual(registration.BindingId, (await Client(f, recovered, replacement).Access(Actor)).Registration.BindingId);
     }
@@ -127,7 +127,7 @@ public class OwnerControlTests
         await using var f = new ServiceFixture { OidcAdministration = false }; f.Http = f.NewClient();
         using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256); var registration = await Local<OwnerRegistration>(f, Bootstrap(key));
         using var json = JsonDocument.Parse("{}");
-        await Assert.ThrowsAsync<HttpRequestException>(() => Client(f, registration, key).Import(Actor, 1, new("google-web-client", "provider", json.RootElement)));
+        await Assert.ThrowsAnyAsync<HttpRequestException>(() => Client(f, registration, key).Import(Actor, 1, new("google-web-client", "provider", json.RootElement)));
         Assert.Equal(0, await f.Db(db => db.Profiles.CountAsync()));
     }
 }

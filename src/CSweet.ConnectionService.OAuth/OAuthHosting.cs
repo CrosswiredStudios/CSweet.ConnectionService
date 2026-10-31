@@ -97,10 +97,11 @@ public static class OAuthHosting
         if (app.Services.GetRequiredService<ServiceOptions>().KnownProxyAddresses.Length > 0) app.UseForwardedHeaders();
         app.Use(async (context, next) =>
         {
+            OwnerFailureScope.Begin(context);
             context.Response.Headers.CacheControl = "no-store"; context.Response.Headers["Referrer-Policy"] = "no-referrer";
             context.Response.Headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
             context.Response.Headers.XContentTypeOptions = "nosniff"; context.Response.Headers["X-CSweet-Connection-Protocol"] = ConnectionProtocol.Version;
-            if (!context.Request.IsHttps) { context.Response.StatusCode = 400; return; }
+            if (!context.Request.IsHttps) { context.Response.StatusCode = 400; OwnerFailureScope.Report(context, null); return; }
             try { await next(); }
             catch (Exception error) when (!context.Response.HasStarted && error is not OperationCanceledException)
             {
@@ -112,6 +113,7 @@ public static class OAuthHosting
                     ArgumentException or InvalidOperationException or JsonException or FormatException or BadHttpRequestException => 400,
                     _ => 500
                 };
+                OwnerFailureScope.Report(context, error);
                 await context.Response.WriteAsJsonAsync(new ServiceFailure(context.Response.StatusCode == 403 ? "connection_not_authorized" : context.Response.StatusCode == 409 ? "state_changed" : "connection_request_failed"));
             }
         });

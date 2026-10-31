@@ -15,6 +15,10 @@ using var stalled = new HttpClient(new StalledFixture()) { Timeout = TimeSpan.Fr
 try { await new OwnerAdministrationClient(stalled, registration, key, TimeProvider.System).Access(actor); throw new InvalidOperationException("Owner body deadline was not enforced."); }
 catch (OperationCanceledException) { }
 Console.WriteLine("NuGet-only owner contracts, signed request and response-body deadline passed.");
+using var diagnosticResponse = new HttpResponseMessage(System.Net.HttpStatusCode.BadRequest);
+diagnosticResponse.Headers.Add(OwnerFailureDiagnostic.Header, new OwnerFailureDiagnostic("name", "request_rejected", "ArgumentException", new string('a', 32), 12).Encode(diagnosticResponse.StatusCode));
+if (OwnerFailureDiagnostic.Read(diagnosticResponse.Headers, diagnosticResponse.StatusCode)?.Stage != "name") throw new InvalidOperationException("Packaged diagnostic contract mismatch.");
+Console.WriteLine("NuGet-only owner diagnostic contract passed.");
 
 sealed class OwnerFixture(ECDsa key, OwnerRegistration registration, Guid actor) : HttpMessageHandler
 {
