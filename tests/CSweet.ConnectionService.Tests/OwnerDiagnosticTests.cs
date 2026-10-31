@@ -10,6 +10,22 @@ namespace CSweet.ConnectionService.Tests;
 public sealed class OwnerDiagnosticTests
 {
     [Fact]
+    public async Task InvalidSignatureDoesNotExposeBindingOrCryptographicStageInPublicHint()
+    {
+        await using var f = new ServiceFixture { OidcAdministration = false }; f.Http = f.NewClient();
+        using var owner = ECDsa.Create(ECCurve.NamedCurves.nistP256); using var wrong = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var actor = Guid.NewGuid();
+        await using var scope = f.Services.CreateAsyncScope();
+        var registration = (OwnerRegistration)await scope.ServiceProvider.GetRequiredService<LocalOwnerAdministration>().Execute(
+            new("bootstrap", ServiceFixture.Origin, Guid.NewGuid(), DeploymentProofCodec.Encode(owner.ExportSubjectPublicKeyInfo()), "owner", actor, "tenant-a", [OwnerProtocol.Enroll], 0), default);
+        var error = await Assert.ThrowsAsync<OwnerOperationException>(() => new OwnerAdministrationClient(f.Http, registration, wrong, f.Clock).Access(actor));
+        Assert.Equal(HttpStatusCode.Forbidden, error.StatusCode);
+        Assert.Equal("authorization", error.Diagnostic!.Stage);
+        Assert.Equal("UnauthorizedAccessException", error.Diagnostic.ExceptionType);
+        Assert.Contains(f.Logs.Messages, x => x.Contains("exceptionType=CryptographicException", StringComparison.Ordinal));
+        Assert.Equal(0, await f.Db(db => db.OwnerNonces.CountAsync()));
+    }
+    [Fact]
     public async Task ValidationFailureHasSafeHintsAndRollsBackNonceDeploymentAndEvents()
     {
         await using var f = new ServiceFixture { OidcAdministration = false }; f.Http = f.NewClient();
@@ -89,6 +105,9 @@ public sealed class OwnerDiagnosticTests
         Assert.Null(OwnerFailureDiagnostic.Read(response.Headers, response.StatusCode));
         response.Headers.Remove(OwnerFailureDiagnostic.Header);
         response.Headers.TryAddWithoutValidation(OwnerFailureDiagnostic.Header, "v1.enrollment.not_authorized.UnauthorizedAccessException.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.1");
+        Assert.Null(OwnerFailureDiagnostic.Read(response.Headers, HttpStatusCode.Forbidden));
+        response.Headers.Remove(OwnerFailureDiagnostic.Header);
+        response.Headers.TryAddWithoutValidation(OwnerFailureDiagnostic.Header, "v1.authorization.not_authorized.CryptographicException.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.1");
         Assert.Null(OwnerFailureDiagnostic.Read(response.Headers, HttpStatusCode.Forbidden));
     }
 

@@ -36,11 +36,12 @@ internal sealed class OwnerFailureScope
             DbUpdateException => "DbUpdateException", JsonException => "JsonException", FormatException => "FormatException",
             BadHttpRequestException => "BadHttpRequestException", ArgumentException => "ArgumentException", InvalidOperationException => "InvalidOperationException", _ => "Exception"
         };
-        var diagnostic = new OwnerFailureDiagnostic(stage, OwnerFailureDiagnostic.CodeFor(status), type, scope.correlation,
+        // A public 403 must not reveal whether a binding existed or which signature/key check failed.
+        var diagnostic = new OwnerFailureDiagnostic(stage, OwnerFailureDiagnostic.CodeFor(status), status == HttpStatusCode.Forbidden ? "UnauthorizedAccessException" : type, scope.correlation,
             (int)Math.Min(OwnerFailureDiagnostic.MaximumElapsedMilliseconds, Stopwatch.GetElapsedTime(scope.started).TotalMilliseconds));
         context.Response.Headers[OwnerFailureDiagnostic.Header] = diagnostic.Encode(status);
         context.RequestServices.GetRequiredService<ILogger<OwnerControl>>().LogWarning(
             "Owner control rejected: operation={Operation} stage={Stage} code={Code} status={Status} exceptionType={ExceptionType} correlationId={CorrelationId} elapsedMs={ElapsedMilliseconds}",
-            scope.Operation, diagnostic.Stage, diagnostic.Code, (int)status, diagnostic.ExceptionType, diagnostic.CorrelationId, diagnostic.ElapsedMilliseconds);
+            scope.Operation, diagnostic.Stage, diagnostic.Code, (int)status, type, diagnostic.CorrelationId, diagnostic.ElapsedMilliseconds);
     }
 }

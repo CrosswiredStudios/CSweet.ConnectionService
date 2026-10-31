@@ -2,7 +2,9 @@
 
 Version 0.5.0 adds optional content-free failure diagnostics in `X-CSweet-Owner-Diagnostic`.
 The service generates a correlation ID and emits only fixed stage/code/type labels, HTTP status
-and bounded elapsed time. Authorization failures always use the generic authorization stage.
+and bounded elapsed time. Public authorization failures always use the generic authorization stage
+and `UnauthorizedAccessException` type, preventing a binding/signature-check oracle. Protected
+server diagnostics retain the fixed actual exception type.
 The Protocol client accepts only the versioned canonical format and known labels; malformed or
 absent metadata is ignored. Failure bodies are never read or forwarded. Existing clients still
 receive the same failure bodies, and new clients support services without diagnostics.

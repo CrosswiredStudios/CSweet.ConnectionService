@@ -33,7 +33,7 @@ public sealed record OwnerFailureDiagnostic(string Stage, string Code, string Ex
             !int.TryParse(parts[5], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var elapsed) || elapsed is < 0 or > MaximumElapsedMilliseconds ||
             parts[5] != elapsed.ToString(System.Globalization.CultureInfo.InvariantCulture)) return null;
         // Never expose detailed stages before authorization, even if a remote service supplies them.
-        if ((int)status == 403 && parts[1] != "authorization") return null;
+        if ((int)status == 403 && (parts[1] != "authorization" || parts[3] != "UnauthorizedAccessException")) return null;
         return new(parts[1], parts[2], parts[3], parts[4], elapsed);
     }
 }
