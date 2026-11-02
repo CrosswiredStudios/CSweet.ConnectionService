@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace CSweet.ConnectionService.Protocol;
 
 /// <summary>Host backchannel client. No provider client secret or provider token API.</summary>
-public sealed class ManagedConnectionClient(HttpClient http, Uri serviceUri, Guid deploymentId, string keyId, long deploymentRevision, ECDsa deploymentKey, TimeProvider clock)
+public sealed partial class ManagedConnectionClient(HttpClient http, Uri serviceUri, Guid deploymentId, string keyId, long deploymentRevision, ECDsa deploymentKey, TimeProvider clock)
 {
     public Task<ProfileAvailability> Availability(string digest, CancellationToken ct = default) => Send<ProfileAvailability>(HttpMethod.Get, "/v1/packages/" + Uri.EscapeDataString(digest), null, ct);
     public Task<DeploymentRegistration> Registration(CancellationToken ct = default) => Send<DeploymentRegistration>(HttpMethod.Get, "/v1/deployment", null, ct);
