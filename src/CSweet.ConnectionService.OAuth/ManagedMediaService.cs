@@ -29,12 +29,15 @@ public sealed class ManagedMediaService(ConnectionStore db, CredentialVault vaul
             var existing = await db.MediaTransfers.SingleOrDefaultAsync(x => x.DeploymentId == deployment.Id && x.IdempotencyHash == idempotency, ct);
             if (existing is not null)
             {
-                if (existing.BindingHash != binding || existing.PolicyHash != authority.Policy || existing.ValidUntil <= Now)
+                authority = await Require(deployment, connection, request, true, ct);
+                if (existing.ConnectionId != connection || existing.BindingHash != binding || existing.PolicyHash != authority.Policy || existing.ValidUntil <= Now ||
+                    existing.LeaseOwner is not null || existing.LeaseUntil != 0)
                     throw new UnauthorizedAccessException();
                 if (existing.State is not ("Ready" or "ProbeRequired" or "Completed")) throw new InvalidOperationException("Initiation is already recorded; do not initiate a replacement.");
-                return View(existing);
+                var receipt = View(existing);
+                await transaction.CommitAsync(ct); return receipt;
             }
-            await Require(deployment, connection, request, true, ct);
+            authority = await Require(deployment, connection, request, true, ct);
             row = new() { Id = Guid.NewGuid(), DeploymentId = deployment.Id, ConnectionId = connection, IdempotencyHash = idempotency,
                 BindingHash = binding, PolicyHash = authority.Policy, ValidUntil = request.ValidUntil, LeaseOwner = owner, LeaseUntil = Now + 40 };
             row.ProtectedRequest = vault.Seal(Purpose(row, "plan"), JsonSerializer.Serialize(request, DeploymentProofCodec.Json));
@@ -70,11 +73,19 @@ public sealed class ManagedMediaService(ConnectionStore db, CredentialVault vaul
             ?? throw new UnauthorizedAccessException();
         var request = ReadPlan(row); var authority = await Require(deployment, row.ConnectionId, request, false, ct);
         if (row.PolicyHash != authority.Policy || row.ValidUntil <= Now) throw new UnauthorizedAccessException();
-        if (row.State == "Completed") return View(row);
         var owner = Guid.NewGuid();
         await using (var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, ct))
         {
             await db.Entry(row).ReloadAsync(ct);
+            authority = await Require(deployment, row.ConnectionId, request, false, ct);
+            if (row.BindingHash != binding || row.BindingHash != request.BindingHash(row.ConnectionId) || row.PolicyHash != authority.Policy || row.ValidUntil <= Now)
+                throw new UnauthorizedAccessException();
+            if (row.State == "Completed")
+            {
+                if (row.LeaseOwner is not null || row.LeaseUntil != 0) throw new UnauthorizedAccessException();
+                var receipt = View(row);
+                await transaction.CommitAsync(ct); return receipt;
+            }
             if (row.State is not ("Ready" or "ProbeRequired" or "InFlight") || row.LeaseOwner is not null && row.LeaseUntil > Now || row.RetryAt > Now || row.Failures >= 8)
                 throw new InvalidOperationException("The transfer is not available for this exchange.");
             if (offset is { } start)
@@ -86,7 +97,6 @@ public sealed class ManagedMediaService(ConnectionStore db, CredentialVault vaul
                 row.MaximumSentBytes = Math.Max(row.MaximumSentBytes, start + chunk.Length);
             }
             else if (chunk.Length != 0) throw new ArgumentException("Probes cannot contain media.");
-            await Require(deployment, row.ConnectionId, request, false, ct);
             row.State = "InFlight"; row.LeaseOwner = owner; row.LeaseUntil = Now + 40; row.Revision++;
             await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
         }

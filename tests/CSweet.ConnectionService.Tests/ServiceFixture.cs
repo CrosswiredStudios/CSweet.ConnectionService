@@ -140,7 +140,8 @@ internal sealed class CapturedLogs : ILoggerProvider
 internal sealed class MutableClock : TimeProvider
 {
     private DateTimeOffset now = DateTimeOffset.UtcNow;
-    public override DateTimeOffset GetUtcNow() => now;
+    public Action? BeforeRead;
+    public override DateTimeOffset GetUtcNow() { BeforeRead?.Invoke(); return now; }
     public void Advance(TimeSpan amount) => now += amount;
 }
 internal sealed class FakeProvider : IProviderOAuthTransport

@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
+using System.Data.Common;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
@@ -15,6 +16,77 @@ namespace CSweet.ConnectionService.Tests;
 
 public sealed class ManagedMediaTests
 {
+    [Theory]
+    [InlineData("begin", "disconnect")]
+    [InlineData("begin", "deployment")]
+    [InlineData("begin", "package")]
+    [InlineData("begin", "profile")]
+    [InlineData("begin", "policy")]
+    [InlineData("begin", "cancel")]
+    [InlineData("begin", "lease")]
+    [InlineData("begin", "expired")]
+    [InlineData("probe", "disconnect")]
+    [InlineData("probe", "deployment")]
+    [InlineData("probe", "package")]
+    [InlineData("probe", "profile")]
+    [InlineData("probe", "policy")]
+    [InlineData("probe", "cancel")]
+    [InlineData("probe", "lease")]
+    [InlineData("probe", "expired")]
+    public async Task CachedMediaReceiptsCannotReleaseResultsAfterAuthorityOrCancellationChanges(string path, string change)
+    {
+        await using var f = new MediaFixture(); var (id, request) = await f.Ready(); f.Allow();
+        var start = await f.Client().BeginMedia(id, request);
+        Assert.Equal("Completed", (await f.Client().MediaChunk(start.TransferId, start.BindingHash, 0, new byte[17])).State);
+        f.Cached.Arm(1, () =>
+        {
+            async Task Change()
+            {
+                if (change == "disconnect") await f.Client().Disconnect(id);
+                else if (change == "cancel") await f.Client().CancelMedia(start.TransferId, start.BindingHash);
+                else if (change == "deployment") await f.Db(async db => { (await db.Deployments.SingleAsync()).Revision++; return await db.SaveChangesAsync(); });
+                else if (change == "policy") f.Services.GetRequiredService<ServiceOptions>().ExecutionPolicies = [];
+                else if (change is "lease" or "expired") await f.Db(async db =>
+                {
+                    var row = await db.MediaTransfers.SingleAsync();
+                    if (change == "lease") { row.LeaseOwner = Guid.NewGuid(); row.LeaseUntil = f.Clock.GetUtcNow().ToUnixTimeSeconds() + 20; }
+                    else row.ValidUntil = f.Clock.GetUtcNow().ToUnixTimeSeconds() - 1;
+                    row.Revision++; return await db.SaveChangesAsync();
+                });
+                else
+                {
+                    await using var scope = f.Services.CreateAsyncScope(); var registry = scope.ServiceProvider.GetRequiredService<RegistryService>();
+                    if (change == "package") await registry.RevokePackage("operator", f.Digest, default);
+                    else await registry.DisableProfile("operator", f.ProfileId, default);
+                }
+            }
+            Change().GetAwaiter().GetResult();
+        });
+        var result = path == "begin" ? f.Client().BeginMedia(id, request) : f.Client().ProbeMedia(start.TransferId, start.BindingHash);
+        await Assert.ThrowsAsync<HttpRequestException>(() => result);
+        Assert.True(f.Cached.Injected); Assert.Equal(1, f.Media.Begins); Assert.Equal(1, f.Media.Exchanges);
+        Assert.Equal(1, await f.Db(db => db.Events.CountAsync(x => x.Kind == "media.completed")));
+    }
+
+    [Theory]
+    [InlineData("begin")]
+    [InlineData("probe")]
+    public async Task CachedReceiptValidationAndMaterializationShareTheAuthorityWriteFence(string path)
+    {
+        await using var f = new MediaFixture(); var (id, request) = await f.Ready(); f.Allow();
+        var start = await f.Client().BeginMedia(id, request);
+        await f.Client().MediaChunk(start.TransferId, start.BindingHash, 0, new byte[17]);
+        var blocked = false;
+        f.Cached.Arm(2, () =>
+        {
+            using var writer = new SqliteConnection("Data Source=" + Path.Combine(f.Root, "connections.db") + ";Default Timeout=1");
+            writer.Open(); using var command = writer.CreateCommand(); command.CommandText = "UPDATE Deployments SET Revision = Revision + 1";
+            try { command.ExecuteNonQuery(); } catch (SqliteException e) when (e.SqliteErrorCode == 5) { blocked = true; }
+        });
+        var result = path == "begin" ? await f.Client().BeginMedia(id, request) : await f.Client().ProbeMedia(start.TransferId, start.BindingHash);
+        Assert.Equal("Completed", result.State); Assert.True(f.Cached.Injected); Assert.True(blocked);
+        Assert.Equal(1, f.Media.Begins); Assert.Equal(1, f.Media.Exchanges);
+    }
     [Theory]
     [InlineData("destination")]
     [InlineData("headers")]
@@ -292,9 +364,11 @@ public sealed class ManagedMediaTests
     {
         public readonly FakeMedia Media = new();
         public readonly MediaSaves Saves = new();
+        public readonly CachedReadRace Cached = new();
         public MediaFixture(bool resultBinding = true, string? unsupportedOutput = null, string? existingRoot = null, FakeMedia? existingProvider = null) : base(existingRoot)
         {
             if (existingProvider is not null) Media = existingProvider;
+            Clock.BeforeRead = Cached.Inject;
             ManifestResource = "YouTubeConnector.0.2.2.json";
             ManifestTransform = source =>
             {
@@ -315,7 +389,7 @@ public sealed class ManagedMediaTests
             base.ConfigureWebHost(builder); builder.ConfigureServices(services =>
             { services.RemoveAll<IProviderApiTransport>(); services.AddSingleton<IProviderApiTransport>(Media);
                 services.RemoveAll<IProviderMediaTransport>(); services.AddSingleton<IProviderMediaTransport>(Media);
-                services.AddDbContext<ConnectionStore>(o => o.AddInterceptors(Saves)); });
+                services.AddDbContext<ConnectionStore>(o => o.AddInterceptors(Saves, new CachedCommands(Cached))); });
         }
         public void Allow() => Services.GetRequiredService<ServiceOptions>().ExecutionPolicies =
             [new() { DeploymentId = Deployment.DeploymentId, TenantId = Deployment.TenantId, PackageDigests = [Digest], AllowResumableMedia = true }];
@@ -328,6 +402,30 @@ public sealed class ManagedMediaTests
                 categoryId = "22", privacyStatus = "private", madeForKids = false, containsSyntheticMedia = false, notifySubscribers = false, idempotencyKey = "synthetic-idempotency" });
             return (id, new(new(Deployment.TenantId, begin.InstallationId, Guid.NewGuid(), Digest, "youtube.api.video.upload.v1", "channel-one", input, new string('a', 64), Clock.GetUtcNow().ToUnixTimeSeconds() + 30),
                 "synthetic-idempotency", asset, new string('b', 64), size, "video/mp4", "synthetic-human-plan", Clock.GetUtcNow().AddMinutes(30).ToUnixTimeSeconds()));
+        }
+    }
+    private sealed class CachedReadRace
+    {
+        private int profiles, target; private Action? action;
+        public bool Injected;
+        public void Arm(int profileReads, Action callback) { profiles = 0; target = profileReads; action = callback; Injected = false; }
+        public void ProfileQuery() { if (action is not null && !Injected) profiles++; }
+        public void Inject()
+        {
+            // Require reads the profile after its connection snapshot, then consults the
+            // clock after that reader is fully consumed/disposed. Inject at that boundary,
+            // without retaining a SQLite read lock or adding a production-only test hook.
+            if (action is null || Injected || profiles < target) return;
+            Injected = true; action();
+        }
+    }
+    private sealed class CachedCommands(CachedReadRace race) : DbCommandInterceptor
+    {
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command, CommandEventData data,
+            InterceptionResult<DbDataReader> result, CancellationToken ct = default)
+        {
+            if (command.CommandText.StartsWith("SELECT", StringComparison.Ordinal) && command.CommandText.Contains("FROM \"Profiles\"", StringComparison.Ordinal)) race.ProfileQuery();
+            return ValueTask.FromResult(result);
         }
     }
     private sealed class MediaSaves : SaveChangesInterceptor

@@ -58,7 +58,10 @@ deployment proofs over exact bytes, nonce replay checks and all other route limi
 
 Completion requires all bytes attempted, supported declared output schemas, matching response
 resource pointers and a final transactional authority/lease check. Results remain encrypted
-at rest. Local cancellation fences continuation and clears the saved session/result; it does
+at rest. Cached initiation/completion receipts also revalidate current authority and the
+reloaded transfer inside the same serializable transaction that materializes the receipt.
+They cannot return a stale pre-revocation or pre-cancellation result. No cached receipt
+initiates another provider exchange. Local cancellation fences continuation and clears the saved session/result; it does
 not claim provider-side deletion, processing cancellation or backup erasure. Expiration clears
 primary stored media content/session/result under a content-free audit, retaining the
 idempotency tombstone so an expired transfer cannot silently restart.
