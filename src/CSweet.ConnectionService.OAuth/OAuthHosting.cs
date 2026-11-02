@@ -77,8 +77,10 @@ public static class OAuthHosting
         builder.Services.AddSingleton<OAuthScopeConventions>();
         builder.Services.AddSingleton<IProviderOAuthTransport, PinnedProviderTransport>();
         builder.Services.AddSingleton<IProviderApiTransport, PinnedProviderTransport>();
+        builder.Services.AddSingleton<IProviderMediaTransport, PinnedProviderTransport>();
         builder.Services.AddScoped<ConnectionCredentialService>(); builder.Services.AddScoped<ConnectionDiscoveryService>(); builder.Services.AddScoped<ConnectionRevocationService>();
         builder.Services.AddScoped<ManagedReadService>();
+        builder.Services.AddScoped<ManagedMediaService>();
         builder.Services.AddHostedService<ConnectionMaintenance>();
         builder.Services.AddSingleton<IConnectionModule, OAuthConnectionModule>();
     }
@@ -162,6 +164,11 @@ public sealed class OAuthConnectionModule : IConnectionModule
         api.MapGet("/connections/{id:guid}", async (Guid id, HttpContext c, ConsentService s, CancellationToken ct) => Results.Ok(await s.Snapshot(DeploymentFor(c), id, ct)));
         api.MapPost("/connections/{id:guid}/inventory", async (Guid id, HttpContext c, ConnectionDiscoveryService s, CancellationToken ct) => Results.Ok(await s.Discover(DeploymentFor(c), id, ct)));
         api.MapPost("/connections/{id:guid}/operations/read", async (Guid id, HttpContext c, ManagedReadRequest request, ManagedReadService s, CancellationToken ct) => Results.Ok(await s.Read(DeploymentFor(c), id, request, ct)));
+        api.MapPost("/connections/{id:guid}/media", async (Guid id, HttpContext c, ManagedMediaRequest request, ManagedMediaService s, CancellationToken ct) => Results.Ok(await s.Begin(DeploymentFor(c), id, request, ct)));
+        api.MapPost("/media/{id:guid}/probe", async (Guid id, HttpContext c, ManagedMediaControl request, ManagedMediaService s, CancellationToken ct) => Results.Ok(await s.Exchange(DeploymentFor(c), id, request.BindingHash, null, [], ct)));
+        api.MapPost("/media/{id:guid}/cancel", async (Guid id, HttpContext c, ManagedMediaControl request, ManagedMediaService s, CancellationToken ct) => Results.Ok(await s.Cancel(DeploymentFor(c), id, request, ct)));
+        api.MapPost("/media/{id:guid}/chunks/{offset:long}/{binding}", async (Guid id, long offset, string binding, HttpContext c, ManagedMediaService s, CancellationToken ct) =>
+            Results.Ok(await s.Exchange(DeploymentFor(c), id, binding, offset, c.Items[ManagedMediaRoutes.BodyKey] as byte[] ?? throw new UnauthorizedAccessException(), ct)));
         api.MapPost("/connections/{id:guid}/disconnect", async (Guid id, HttpContext c, ConsentService s, CancellationToken ct) => Results.Ok(await s.Disconnect(DeploymentFor(c), id, ct)));
         api.MapGet("/events", async (long after, HttpContext c, ConnectionStore db, CancellationToken ct) =>
         {

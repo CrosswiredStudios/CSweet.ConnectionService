@@ -9,4 +9,5 @@
   </ItemGroup>
   <ItemGroup><Using Include="Xunit" /></ItemGroup>
   <ItemGroup><EmbeddedResource Include="Fixtures/youtube-0.2.1.json" LogicalName="YouTubeConnector.0.2.1.json" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="Fixtures/youtube-0.2.2.json" LogicalName="YouTubeConnector.0.2.2.json" /></ItemGroup>
 </Project>

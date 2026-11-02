@@ -52,6 +52,7 @@ public sealed class ConnectionMaintenance(IServiceScopeFactory scopes, TimeProvi
             {
                 await Sweep(scope.ServiceProvider.GetRequiredService<ConnectionStore>(), clock.GetUtcNow(), stoppingToken);
                 await scope.ServiceProvider.GetRequiredService<ConnectionRevocationService>().Process(stoppingToken);
+                await scope.ServiceProvider.GetRequiredService<ManagedMediaService>().Expire(stoppingToken);
             }
             catch (DbUpdateException) { /* Another worker won the version fence; a later bounded pass retries. */ }
         }

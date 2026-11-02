@@ -20,14 +20,21 @@ public sealed partial class ManagedConnectionClient(HttpClient http, Uri service
     public Task<IReadOnlyList<ServiceEvent>> Events(long after, CancellationToken ct = default) => Send<IReadOnlyList<ServiceEvent>>(HttpMethod.Get, $"/v1/events?after={after}", null, ct);
     private async Task<T> Send<T>(HttpMethod method, string path, object? body, CancellationToken ct)
     {
-        if (!serviceUri.IsAbsoluteUri || serviceUri.Scheme != "https" || serviceUri.AbsolutePath != "/" || !string.IsNullOrEmpty(serviceUri.UserInfo) || !string.IsNullOrEmpty(serviceUri.Query) || !string.IsNullOrEmpty(serviceUri.Fragment)) throw new InvalidOperationException("An exact HTTPS service origin is required.");
         var bytes = body is null ? [] : JsonSerializer.SerializeToUtf8Bytes(body, DeploymentProofCodec.Json);
         if (bytes.Length > ConnectionProtocol.MaximumBodyBytes) throw new ArgumentException("Request exceeds the protocol limit.");
+        return await SendBytes<T>(method, path, bytes, body is null ? null : "application/json", ct);
+    }
+    private async Task<T> SendBytes<T>(HttpMethod method, string path, byte[] bytes, string? contentType, CancellationToken ct)
+    {
+        if (!serviceUri.IsAbsoluteUri || serviceUri.Scheme != "https" || serviceUri.AbsolutePath != "/" || !string.IsNullOrEmpty(serviceUri.UserInfo) || !string.IsNullOrEmpty(serviceUri.Query) || !string.IsNullOrEmpty(serviceUri.Fragment)) throw new InvalidOperationException("An exact HTTPS service origin is required.");
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(http.Timeout == Timeout.InfiniteTimeSpan || http.Timeout > TimeSpan.FromSeconds(30) ? TimeSpan.FromSeconds(30) : http.Timeout);
+        ct = deadline.Token;
         var now = clock.GetUtcNow().ToUnixTimeSeconds();
         var proof = new DeploymentProof(deploymentId, keyId, serviceUri.AbsoluteUri.TrimEnd('/'), method.Method, path, DeploymentProofCodec.Hash(bytes), now, now + 30, DeploymentProofCodec.Random(), deploymentRevision);
         using var request = new HttpRequestMessage(method, new Uri(serviceUri, path));
         lock (deploymentKey) request.Headers.Add(ConnectionProtocol.ProofHeader, DeploymentProofCodec.Sign(proof, deploymentKey));
-        if (body is not null) { request.Content = new ByteArrayContent(bytes); request.Content.Headers.ContentType = new("application/json"); }
+        if (contentType is not null) { request.Content = new ByteArrayContent(bytes); request.Content.Headers.ContentType = new(contentType); }
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         if (!response.IsSuccessStatusCode) throw new HttpRequestException("The managed connection request was not accepted.", null, response.StatusCode);
         if (!response.Headers.TryGetValues("X-CSweet-Connection-Protocol", out var versions) || !versions.SequenceEqual([ConnectionProtocol.Version]))
