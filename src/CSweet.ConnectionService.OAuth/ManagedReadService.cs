@@ -34,6 +34,8 @@ public sealed class ManagedReadService(ConnectionStore db, CredentialVault vault
             mapping.ScopeSets.Except(JsonSerializer.Deserialize<string[]>(connection.GrantedScopeSetsJson)!, StringComparer.Ordinal).Any())
             throw new UnauthorizedAccessException();
         ManagedRequestSchemaValidator.ValidateSchema(operation.InputSchema);
+        ManagedRequestSchemaValidator.ValidateSchema(operation.OutputSchema);
+        ManagedRequestSchemaValidator.ValidateSchema(provided.OutputSchema);
         ManagedRequestSchemaValidator.Validate(request.Input, operation.InputSchema);
         RequireInventory(connection, request.ResourceId, manifest.Accounts.Lifecycle.AuthorizationCheckHours);
         // Refresh uses the service-owned vault and cannot add scope sets. Never export this receipt.

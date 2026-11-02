@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Net.Http.Json;
 using CSweet.ConnectionService.Protocol;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
@@ -10,6 +12,16 @@ namespace CSweet.ConnectionService.Tests;
 
 public sealed class ManagedReadTests
 {
+    [Theory]
+    [InlineData("allOf")]
+    [InlineData("not")]
+    public async Task UnsupportedOutputContractsAreRejectedBeforeProviderIo(string keyword)
+    {
+        await using var f = new ReadFixture { UnsupportedKeyword = keyword };
+        var (id, request) = await f.Ready(); f.Allow(); await Rejected(f, id, request);
+        Assert.Equal(0, f.Api.ExecutionCalls);
+        Assert.False(await f.Db(db => db.Events.AnyAsync(x => x.Kind == "connection.operation-read")));
+    }
     [Fact]
     public async Task EnrollmentDoesNotAuthorizeExecutionAndAnExactPolicyIsRequired()
     {
@@ -158,6 +170,7 @@ public sealed class ManagedReadTests
     private sealed class ReadFixture : ServiceFixture
     {
         public readonly ReadProvider Api = new();
+        public string? UnsupportedKeyword;
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             base.ConfigureWebHost(builder); builder.ConfigureServices(services =>
@@ -167,7 +180,24 @@ public sealed class ManagedReadTests
             [new() { DeploymentId = Deployment.DeploymentId, TenantId = Deployment.TenantId, PackageDigests = [Digest], AllowReads = true }];
         public async Task<(Guid, ManagedReadRequest)> Ready(string[]? scopeSets = null)
         {
-            await Initialize(); var begin = BeginRequest(scopeSets); var (_, state, cookie) = await Launch(begin);
+            await Initialize();
+            if (UnsupportedKeyword is not null)
+            {
+                var root = JsonNode.Parse(Manifest)!;
+                // SDK consistency requires operation/provided schemas to match. It does not
+                // establish that this runtime supports all of their validation keywords.
+                foreach (var collection in new[] { "providerOperations", "provides" })
+                {
+                    var declaration = root[collection]!.AsArray().Single(x =>
+                        x![collection == "providerOperations" ? "capability" : "name"]!.GetValue<string>() == "youtube.api.channel.read.v1")!;
+                    declaration["outputSchema"]![UnsupportedKeyword] = UnsupportedKeyword == "allOf" ? new JsonArray(new JsonObject()) : new JsonObject();
+                }
+                Manifest = root.ToJsonString(); Digest = DeploymentProofCodec.Hash("synthetic-reviewed-contract:" + Manifest);
+                _ = RegistryService.ReadManifest(Manifest);
+                using var approved = await Http.PostAsJsonAsync("/operator/packages", new ApprovePackage(Digest, DeploymentProofCodec.Hash(Manifest), Manifest, ProfileId, 1, "https://github.com/example/connector", new string('a', 40)));
+                approved.EnsureSuccessStatusCode();
+            }
+            var begin = BeginRequest(scopeSets); var (_, state, cookie) = await Launch(begin);
             var handoff = await Callback(state, cookie);
             var receipt = await Client().Redeem(new(handoff, ReturnVerifier, begin.LocalAttemptId, begin.ActorId, Digest));
             var id = receipt.ConnectionId!.Value; Assert.Equal("Ready", (await Client().Discover(id)).Status); Api.Ready = true;
