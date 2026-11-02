@@ -11,7 +11,7 @@ internal sealed record OAuthState(Guid SessionId, string ProfileId, long Expires
 internal sealed record StoredCredentials(string AccessToken, string? RefreshToken, DateTimeOffset ExpiresAt)
 { public override string ToString() => "[credentials redacted]"; }
 
-public sealed class ConsentService(ConnectionStore db, RegistryService registry, CredentialVault vault, IProviderOAuthTransport provider, ServiceOptions options, TimeProvider clock,
+public sealed partial class ConsentService(ConnectionStore db, RegistryService registry, CredentialVault vault, IProviderOAuthTransport provider, ServiceOptions options, TimeProvider clock,
     OAuthScopeConventions scopeConventions)
 {
     public async Task<ConnectionAttempt> Begin(Deployment deployment, BeginConnection request, CancellationToken ct)
@@ -234,29 +234,6 @@ public sealed class ConsentService(ConnectionStore db, RegistryService registry,
         db.Sessions.Add(tombstone); db.Event(deployment.Id, "consent.cancelled", null, tombstone.Revision, clock.GetUtcNow(), tombstone.Id);
         await db.SaveChangesAsync(ct);
         return new(tombstone.Id, null, tombstone.Status, "cancelled", []);
-    }
-    public async Task<ConnectionSnapshot> Supersede(Deployment deployment, Guid id, Guid replacementId, CancellationToken ct)
-    {
-        await Active(deployment.Id, deployment.Revision, ct);
-        if (id == replacementId) throw new ArgumentException("A separate replacement is required.");
-        await using var transaction = await db.Database.BeginTransactionAsync(ct);
-        var previous = await db.Connections.SingleOrDefaultAsync(x => x.Id == id && x.DeploymentId == deployment.Id, ct) ?? throw new UnauthorizedAccessException();
-        var replacement = await db.Connections.SingleOrDefaultAsync(x => x.Id == replacementId && x.DeploymentId == deployment.Id, ct) ?? throw new UnauthorizedAccessException();
-        if (previous.Status == "Superseded") return new(previous.Id, previous.Status, previous.Revision, []);
-        await registry.Resolve(replacement.PackageDigest, ct);
-        if (previous.Status is not ("Ready" or "ConnectionRequired") || replacement.Status != "Ready" ||
-            previous.InstallationId != replacement.InstallationId || previous.ProfileId != replacement.ProfileId ||
-            previous.SubjectHash is null || previous.SubjectHash != replacement.SubjectHash || replacement.InventoryVerifiedAt is null ||
-            replacement.InventoryVerifiedAt <= clock.GetUtcNow().AddHours(-1))
-            throw new UnauthorizedAccessException("A current provider-verified replacement for the same identity is required.");
-        // Revoking the old provider token could revoke the replacement too. Retire only this service authority.
-        previous.Status = "Superseded"; previous.ProtectedCredentials = ""; previous.ProtectedInventory = ""; previous.SubjectHash = null;
-        previous.GrantedScopeSetsJson = "[]"; previous.LeaseOwner = null; previous.LeaseUntil = null; previous.Revision++;
-        db.Event(deployment.Id, "connection.superseded-primary-erased", previous.Id, previous.Revision, clock.GetUtcNow());
-        // Version-fence a concurrent replacement disconnect in the same transaction.
-        replacement.Revision++;
-        await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
-        return new(previous.Id, previous.Status, previous.Revision, []);
     }
     private async Task<CallbackReturn> Finish(ConsentSession session, string status, string? failure, CancellationToken ct)
     {
