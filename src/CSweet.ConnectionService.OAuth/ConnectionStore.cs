@@ -11,6 +11,7 @@ public sealed class ConnectionStore(DbContextOptions<ConnectionStore> options) :
     public DbSet<PackageApproval> Packages => Set<PackageApproval>(); public DbSet<ConsentSession> Sessions => Set<ConsentSession>();
     public DbSet<ManagedConnection> Connections => Set<ManagedConnection>(); public DbSet<ProofNonce> Nonces => Set<ProofNonce>();
     public DbSet<ConnectionEvent> Events => Set<ConnectionEvent>();
+    public DbSet<ManagedMediaTransfer> MediaTransfers => Set<ManagedMediaTransfer>();
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.Entity<OwnerBinding>().HasKey(x => x.Id); model.Entity<OwnerBinding>().Property(x => x.Revision).IsConcurrencyToken();
@@ -28,8 +29,33 @@ public sealed class ConnectionStore(DbContextOptions<ConnectionStore> options) :
         model.Entity<ProofNonce>().HasKey(x => new { x.DeploymentId, x.NonceHash });
         model.Entity<ConnectionEvent>().HasKey(x => x.Sequence); model.Entity<ConnectionEvent>().Property(x => x.Sequence).ValueGeneratedOnAdd();
         model.Entity<ConnectionEvent>().HasIndex(x => new { x.DeploymentId, x.Sequence });
+        model.Entity<ManagedMediaTransfer>().HasKey(x => x.Id);
+        model.Entity<ManagedMediaTransfer>().Property(x => x.Revision).IsConcurrencyToken();
+        model.Entity<ManagedMediaTransfer>().HasIndex(x => new { x.DeploymentId, x.IdempotencyHash }).IsUnique();
     }
     public void Event(Guid deploymentId, string kind, Guid? connectionId, long revision, DateTimeOffset now, Guid? sessionId = null, string? operatorSubject = null, string? target = null) => Events.Add(new() { Id = Guid.NewGuid(), DeploymentId = deploymentId, Kind = kind, ConnectionId = connectionId, Revision = revision, CreatedAt = now, SessionId = sessionId, OperatorSubject = operatorSubject, Target = target });
+}
+public sealed class ManagedMediaTransfer
+{
+    public Guid Id { get; set; }
+    public Guid DeploymentId { get; set; }
+    public Guid ConnectionId { get; set; }
+    public string IdempotencyHash { get; set; } = "";
+    public string BindingHash { get; set; } = "";
+    public string PolicyHash { get; set; } = "";
+    public string ProtectedRequest { get; set; } = "";
+    public string ProtectedSession { get; set; } = "";
+    public string ProtectedResult { get; set; } = "";
+    public string State { get; set; } = "Starting";
+    public long Offset { get; set; }
+    public long MaximumSentBytes { get; set; }
+    public long Revision { get; set; } = 1;
+    public Guid? LeaseOwner { get; set; }
+    public long LeaseUntil { get; set; }
+    public long ValidUntil { get; set; }
+    public int Failures { get; set; }
+    public int LastStatus { get; set; }
+    public long? RetryAt { get; set; }
 }
 public sealed class Deployment
 {

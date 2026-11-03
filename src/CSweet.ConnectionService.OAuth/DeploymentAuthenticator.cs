@@ -9,7 +9,10 @@ public sealed class DeploymentAuthenticator(ConnectionStore db, ServiceOptions o
 {
     public async Task<Deployment> Authenticate(HttpContext context, CancellationToken ct)
     {
-        if (context.Request.ContentLength > ConnectionProtocol.MaximumBodyBytes) throw new BadHttpRequestException("Request too large.", 413);
+        var binary = ManagedMediaRoutes.IsChunk(context.Request);
+        ManagedMediaRoutes.SetLimit(context);
+        var maximum = binary ? ManagedExecutionProtocol.MaximumChunkBytes : ConnectionProtocol.MaximumBodyBytes;
+        if (context.Request.ContentLength > maximum) throw new BadHttpRequestException("Request too large.", 413);
         var header = context.Request.Headers[ConnectionProtocol.ProofHeader];
         if (header.Count != 1 || header[0] is not { Length: <= 8192 } encoded) throw new UnauthorizedAccessException();
         var segments = encoded.Split('.'); if (segments.Length != 2) throw new UnauthorizedAccessException();
@@ -26,12 +29,13 @@ public sealed class DeploymentAuthenticator(ConnectionStore db, ServiceOptions o
             proof.Method != context.Request.Method || proof.PathAndQuery != context.Request.PathBase + context.Request.Path + context.Request.QueryString ||
             proof.IssuedAt > now + 5 || proof.IssuedAt < now - 30 || proof.ExpiresAt <= now || proof.ExpiresAt > proof.IssuedAt + 30 || proof.ExpiresAt <= proof.IssuedAt ||
             proof.Nonce is not { Length: >= 43 and <= 64 }) throw new UnauthorizedAccessException();
-        context.Request.EnableBuffering(bufferThreshold: 64 * 1024, bufferLimit: ConnectionProtocol.MaximumBodyBytes);
+        if (!binary) context.Request.EnableBuffering(bufferThreshold: 64 * 1024, bufferLimit: maximum);
         using var body = new MemoryStream(); var buffer = new byte[8192];
-        while (true) { var read = await context.Request.Body.ReadAsync(buffer, ct); if (read == 0) break; if (body.Length + read > ConnectionProtocol.MaximumBodyBytes) throw new BadHttpRequestException("Request too large.", 413); body.Write(buffer, 0, read); }
-        context.Request.Body.Position = 0;
+        while (true) { var read = await context.Request.Body.ReadAsync(buffer, ct); if (read == 0) break; if (body.Length + read > maximum) throw new BadHttpRequestException("Request too large.", 413); body.Write(buffer, 0, read); }
+        if (!binary) context.Request.Body.Position = 0;
         if (!DeploymentProofCodec.Equal(DeploymentProofCodec.Hash(body.ToArray()), proof.BodySha256)) throw new UnauthorizedAccessException();
-        if (body.Length > 0)
+        if (binary) context.Items[ManagedMediaRoutes.BodyKey] = body.ToArray();
+        else if (body.Length > 0)
         {
             using var document = JsonDocument.Parse(body.ToArray(), new JsonDocumentOptions { MaxDepth = 64 });
             if (document.RootElement.ValueKind != JsonValueKind.Object) throw new ArgumentException("An object request is required.");

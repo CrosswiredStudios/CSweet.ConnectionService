@@ -22,7 +22,7 @@ public interface IProviderApiTransport
 }
 
 /// <summary>Only operator-reviewed token endpoints. Pinned public DNS, no proxies, cookies or redirects.</summary>
-public sealed class PinnedProviderTransport : IProviderOAuthTransport, IProviderApiTransport
+public sealed partial class PinnedProviderTransport : IProviderOAuthTransport, IProviderApiTransport
 {
     public async Task<ProviderTokenReceipt> Exchange(ProviderProfile profile, string secret, string code, string verifier, string callback, CancellationToken ct)
     {
@@ -105,6 +105,14 @@ public sealed class PinnedProviderTransport : IProviderOAuthTransport, IProvider
     }
     private static async Task<HttpResponseMessage> Send(Uri destination, HttpContent? content, string? bearer, CancellationToken ct)
     {
+        using var request = new HttpRequestMessage(content is null ? HttpMethod.Get : HttpMethod.Post, destination) { Content = content };
+        if (bearer is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        return await SendRequest(request, ct);
+    }
+    private static async Task<HttpResponseMessage> SendRequest(HttpRequestMessage request, CancellationToken ct)
+    {
+        var destination = request.RequestUri!;
         _ = Guards.Https(destination.GetLeftPart(UriPartial.Path));
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct); timeout.CancelAfter(TimeSpan.FromSeconds(25));
         var addresses = await Dns.GetHostAddressesAsync(destination.DnsSafeHost, timeout.Token);
@@ -123,15 +131,15 @@ public sealed class PinnedProviderTransport : IProviderOAuthTransport, IProvider
             }
         };
         using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
-        using var request = new HttpRequestMessage(content is null ? HttpMethod.Get : HttpMethod.Post, destination) { Content = content };
-        if (bearer is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearer);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         // Buffer within the pinned transport's timeout and size limit; no caller-owned unbounded stream.
         using var received = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
         await using var stream = await received.Content.ReadAsStreamAsync(timeout.Token);
         using var bytes = new MemoryStream(); var buffer = new byte[8192];
         while (true) { var count = await stream.ReadAsync(buffer, timeout.Token); if (count == 0) break; if (bytes.Length + count > 4 * 1024 * 1024) throw new InvalidOperationException("Provider result too large."); bytes.Write(buffer, 0, count); }
-        return new HttpResponseMessage(received.StatusCode) { Content = new ByteArrayContent(bytes.ToArray()) };
+        var result = new HttpResponseMessage(received.StatusCode) { Content = new ByteArrayContent(bytes.ToArray()) };
+        foreach (var header in new[] { "Location", "Range", "Retry-After" })
+            if (received.Headers.TryGetValues(header, out var values)) result.Headers.TryAddWithoutValidation(header, values);
+        return result;
     }
     public static bool IsForbidden(IPAddress address)
     {
