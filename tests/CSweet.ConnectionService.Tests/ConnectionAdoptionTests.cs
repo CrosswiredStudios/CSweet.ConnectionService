@@ -76,18 +76,39 @@ public sealed class ConnectionAdoptionTests
     public async Task SemanticChangesUnderUnchangedIdsAreNotCompatible(string change)
     {
         await using var f=new F();var (id,r)=await f.Ready();
-        await f.Db(async db=>
+        var source=await f.Db(db=>db.Packages.AsNoTracking().SingleAsync(x=>x.Digest==r.SourcePackageDigest));
+        var target=await f.Db(db=>db.Packages.AsNoTracking().SingleAsync(x=>x.Digest==r.TargetPackageDigest));
+        var root=JsonNode.Parse(target.ManifestJson)!;
+        if(change=="scope-definition")root["connections"]![0]!["scopeSets"]![0]!["scopes"]!.AsArray().Add("new-scope");
+        if(change=="permission")root["accounts"]!["permissions"]![0]!["purpose"]="Changed policy";
+        if(change=="read-endpoint")root["providerOperations"]!.AsArray().First(x=>x!["capability"]!.GetValue<string>()=="youtube.api.channel.read.v1")!["http"]!["queryConstants"]!["part"]="id";
+        if(change=="read-output")
         {
-            var package=await db.Packages.SingleAsync(x=>x.Digest==r.TargetPackageDigest);var root=JsonNode.Parse(package.ManifestJson)!;
-            if(change=="scope-definition")root["connections"]![0]!["scopeSets"]![0]!["scopes"]!.AsArray().Add("new-scope");
-            if(change=="permission")root["accounts"]!["permissions"]![0]!["purpose"]="Changed policy";
-            if(change=="read-endpoint")root["providerOperations"]!.AsArray().First(x=>x!["capability"]!.GetValue<string>()=="youtube.api.channel.read.v1")!["http"]!["queryConstants"]!["part"]="id";
-            if(change=="read-output")root["providerOperations"]!.AsArray().First(x=>x!["capability"]!.GetValue<string>()=="youtube.api.channel.read.v1")!["outputSchema"]!["additionalProperties"]=true;
-            if(change=="identity")root["accounts"]!["identity"]!["subjectPointer"]="/other";
-            if(change=="lifecycle")root["accounts"]!["policyVersion"]="changed";
-            if(change=="publisher")root["publisher"]!["id"]="com.other";
-            package.ManifestJson=root.ToJsonString();return await db.SaveChangesAsync();
-        });
+            var operation=root["providerOperations"]!.AsArray().First(x=>x!["capability"]!.GetValue<string>()=="youtube.api.channel.read.v1")!;
+            operation["outputSchema"]!["properties"]!["nextPageToken"]!["maxLength"]=512;
+            root["provides"]!.AsArray().First(x=>x!["name"]!.GetValue<string>()=="youtube.api.channel.read.v1")!["outputSchema"]=operation["outputSchema"]!.DeepClone();
+        }
+        if(change=="identity")root["accounts"]!["identity"]!["subjectPointer"]="/other";
+        if(change=="lifecycle")root["accounts"]!["policyVersion"]="changed";
+        if(change=="publisher")root["publisher"]!["id"]="com.other";
+        var changed=root.ToJsonString();var digest=DeploymentProofCodec.Hash("changed-target:"+changed);
+        // Approve a distinct, intact package through the real operator contract. Never mutate an
+        // existing approved manifest: corrupt integrity would reject before compatibility is evaluated.
+        using var approval=await f.Http.PostAsJsonAsync("/operator/packages",new ApprovePackage(digest,
+            DeploymentProofCodec.Hash(changed),changed,target.ProfileId,target.ProfileRevision,target.RepositoryUrl,new string('c',40)));
+        approval.EnsureSuccessStatusCode();r=r with{TargetPackageDigest=digest};
+        await using(var scope=f.Services.CreateAsyncScope())
+        {
+            var registry=scope.ServiceProvider.GetRequiredService<RegistryService>();
+            var resolvedSource=await registry.Resolve(r.SourcePackageDigest,default);
+            var resolvedTarget=await registry.Resolve(r.TargetPackageDigest,default);
+            Assert.Equal(source.ManifestJson,resolvedSource.Package.ManifestJson);Assert.Equal(changed,resolvedTarget.Package.ManifestJson);
+            var store=scope.ServiceProvider.GetRequiredService<ConnectionStore>();
+            var deployment=await store.Deployments.SingleAsync(x=>x.Id==f.Deployment.DeploymentId);
+            var rejection=await Assert.ThrowsAsync<UnauthorizedAccessException>(()=>scope.ServiceProvider.GetRequiredService<ConnectionAdoptionService>().Preview(deployment,id,r,default));
+            Assert.Equal("The reviewed contracts do not preserve this consent's effective authority.",rejection.Message);
+            Assert.Contains("CompatibleConnectionContract.Require",rejection.StackTrace);
+        }
         await Assert.ThrowsAsync<HttpRequestException>(()=>f.Client().PreviewAdoption(id,r));
         Assert.Empty(await f.Db(db=>db.Adoptions.ToArrayAsync()));Assert.Equal(0,f.Provider.Revocations);
     }
