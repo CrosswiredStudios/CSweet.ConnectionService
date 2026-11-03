@@ -78,6 +78,7 @@ public static class OAuthHosting
         builder.Services.AddSingleton<IProviderOAuthTransport, PinnedProviderTransport>();
         builder.Services.AddSingleton<IProviderApiTransport, PinnedProviderTransport>();
         builder.Services.AddScoped<ConnectionCredentialService>(); builder.Services.AddScoped<ConnectionDiscoveryService>(); builder.Services.AddScoped<ConnectionRevocationService>();
+        builder.Services.AddScoped<ManagedReadService>();
         builder.Services.AddHostedService<ConnectionMaintenance>();
         builder.Services.AddSingleton<IConnectionModule, OAuthConnectionModule>();
     }
@@ -160,6 +161,7 @@ public sealed class OAuthConnectionModule : IConnectionModule
         api.MapPost("/handoffs/redeem", async (HttpContext c, RedeemConnection r, ConsentService s, CancellationToken ct) => Results.Ok(await s.Redeem(DeploymentFor(c), r, ct)));
         api.MapGet("/connections/{id:guid}", async (Guid id, HttpContext c, ConsentService s, CancellationToken ct) => Results.Ok(await s.Snapshot(DeploymentFor(c), id, ct)));
         api.MapPost("/connections/{id:guid}/inventory", async (Guid id, HttpContext c, ConnectionDiscoveryService s, CancellationToken ct) => Results.Ok(await s.Discover(DeploymentFor(c), id, ct)));
+        api.MapPost("/connections/{id:guid}/operations/read", async (Guid id, HttpContext c, ManagedReadRequest request, ManagedReadService s, CancellationToken ct) => Results.Ok(await s.Read(DeploymentFor(c), id, request, ct)));
         api.MapPost("/connections/{id:guid}/disconnect", async (Guid id, HttpContext c, ConsentService s, CancellationToken ct) => Results.Ok(await s.Disconnect(DeploymentFor(c), id, ct)));
         api.MapGet("/events", async (long after, HttpContext c, ConnectionStore db, CancellationToken ct) =>
         {

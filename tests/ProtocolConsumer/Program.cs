@@ -20,6 +20,30 @@ diagnosticResponse.Headers.Add(OwnerFailureDiagnostic.Header, new OwnerFailureDi
 if (OwnerFailureDiagnostic.Read(diagnosticResponse.Headers, diagnosticResponse.StatusCode)?.Stage != "name") throw new InvalidOperationException("Packaged diagnostic contract mismatch.");
 Console.WriteLine("NuGet-only owner diagnostic contract passed.");
 
+var relayConnection = Guid.NewGuid();
+var operation = new ManagedReadRequest("tenant", Guid.NewGuid(), Guid.NewGuid(), new string('a', 64), "sample.read.v1", "resource",
+    System.Text.Json.JsonSerializer.SerializeToElement(new { }), new string('b', 64), DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 30);
+using var relayHttp = new HttpClient(new RelayFixture(key, relayConnection));
+var relay = new ManagedConnectionClient(relayHttp, new("https://service.example"), Guid.NewGuid(), "key", 1, key, TimeProvider.System);
+var relayResult = await relay.ReadOperation(relayConnection, operation);
+if (relayResult.OperationHash != ManagedExecutionBinding.Hash(relayConnection, operation)) throw new InvalidOperationException("Packaged relay binding mismatch.");
+Console.WriteLine("NuGet-only signed read relay and bound result passed.");
+
+sealed class RelayFixture(ECDsa key, Guid connection) : HttpMessageHandler
+{
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var proof = DeploymentProofCodec.Verify(request.Headers.GetValues(ConnectionProtocol.ProofHeader).Single(), key);
+        var body = await request.Content!.ReadAsByteArrayAsync(ct);
+        var operation = System.Text.Json.JsonSerializer.Deserialize<ManagedReadRequest>(body, DeploymentProofCodec.Json)!;
+        if (proof.BodySha256 != DeploymentProofCodec.Hash(body) || proof.Method != "POST" ||
+            proof.PathAndQuery != $"/v1/connections/{connection:D}/operations/read") throw new InvalidOperationException("Invalid packaged relay proof.");
+        var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = System.Net.Http.Json.JsonContent.Create(
+            new ManagedReadResult(connection, 1, ManagedExecutionBinding.Hash(connection, operation), System.Text.Json.JsonSerializer.SerializeToElement(new { }))) };
+        response.Headers.Add("X-CSweet-Connection-Protocol", ConnectionProtocol.Version); return response;
+    }
+}
+
 sealed class OwnerFixture(ECDsa key, OwnerRegistration registration, Guid actor) : HttpMessageHandler
 {
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)

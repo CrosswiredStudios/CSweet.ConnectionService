@@ -18,11 +18,13 @@ public sealed class ServiceOptions
     public bool AllowDevelopmentLoopbackReturns { get; set; }
     public string[] AllowedLocalBrowserReturnUris { get; set; } = [];
     public string[] KnownProxyAddresses { get; set; } = [];
+    public ManagedExecutionPolicy[] ExecutionPolicies { get; set; } = [];
     public string Callback(string profileId) => PublicOrigin + "/oauth/callback/" + Uri.EscapeDataString(profileId);
     public void Validate(bool development)
     {
         if (AllowDevelopmentLoopbackReturns) throw new InvalidOperationException("Replace AllowDevelopmentLoopbackReturns with exact HTTPS AllowedLocalBrowserReturnUris.");
         BrowserReturnPolicy.ValidateConfiguration(AllowedLocalBrowserReturnUris);
+        ManagedExecutionPolicy.Validate(ExecutionPolicies);
         var origin = Guards.Https(PublicOrigin);
         if (origin.AbsolutePath != "/" || PublicOrigin.EndsWith('/')) throw new InvalidOperationException("Configure an HTTPS service origin without a trailing slash.");
         if (string.IsNullOrWhiteSpace(Database) || string.IsNullOrWhiteSpace(KeyRingDirectory)) throw new InvalidOperationException("Configure persistent database and key-ring storage.");
