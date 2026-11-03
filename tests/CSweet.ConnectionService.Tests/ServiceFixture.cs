@@ -25,6 +25,8 @@ internal class ServiceFixture : WebApplicationFactory<Program>
     public const string ReturnUri = "https://customer.example.com/api/plugin-connections/managed/return";
     public string EnrolledReturnUri { get; init; } = ReturnUri;
     public string[] LocalBrowserReturns { get; init; } = [];
+    public Func<string, string>? ManifestTransform { get; init; }
+    public string ManifestResource { get; init; } = "YouTubeConnector.0.2.1.json";
     public IHttpClientFactory? OutboundClients { get; init; }
     public readonly string Root = Path.Combine(Path.GetTempPath(), "csweet-connections-tests", Guid.NewGuid().ToString("N"));
     public ServiceFixture(string? existingRoot = null) { if (existingRoot is not null) Root = existingRoot; }
@@ -71,8 +73,9 @@ internal class ServiceFixture : WebApplicationFactory<Program>
     public async Task Initialize(bool secondProvider = false)
     {
         Http = NewClient(); Http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Token());
-        using var stream = typeof(ServiceFixture).Assembly.GetManifestResourceStream("YouTubeConnector.0.2.1.json")!;
+        using var stream = typeof(ServiceFixture).Assembly.GetManifestResourceStream(ManifestResource)!;
         Manifest = await new StreamReader(stream).ReadToEndAsync();
+        if (ManifestTransform is not null) Manifest = ManifestTransform(Manifest);
         if (secondProvider) Manifest = Manifest.Replace("youtube", "workspace", StringComparison.Ordinal).Replace("google", "example", StringComparison.Ordinal);
         using var doc = JsonDocument.Parse(Manifest); var connection = doc.RootElement.GetProperty("connections")[0];
         ProfileId = connection.GetProperty("providerProfile").GetString()!; var provider = connection.GetProperty("provider");
@@ -137,7 +140,8 @@ internal sealed class CapturedLogs : ILoggerProvider
 internal sealed class MutableClock : TimeProvider
 {
     private DateTimeOffset now = DateTimeOffset.UtcNow;
-    public override DateTimeOffset GetUtcNow() => now;
+    public Action? BeforeRead;
+    public override DateTimeOffset GetUtcNow() { BeforeRead?.Invoke(); return now; }
     public void Advance(TimeSpan amount) => now += amount;
 }
 internal sealed class FakeProvider : IProviderOAuthTransport

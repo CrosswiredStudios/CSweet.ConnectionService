@@ -28,6 +28,36 @@ var relay = new ManagedConnectionClient(relayHttp, new("https://service.example"
 var relayResult = await relay.ReadOperation(relayConnection, operation);
 if (relayResult.OperationHash != ManagedExecutionBinding.Hash(relayConnection, operation)) throw new InvalidOperationException("Packaged relay binding mismatch.");
 Console.WriteLine("NuGet-only signed read relay and bound result passed.");
+var asset = Guid.NewGuid();
+var mediaPlan = new ManagedMediaRequest(operation, "synthetic-once", asset, new string('c', 64), 17, "video/mp4", "synthetic-approval", DateTimeOffset.UtcNow.AddMinutes(30).ToUnixTimeSeconds());
+using var mediaHttp = new HttpClient(new MediaFixture(key, relayConnection));
+var mediaClient = new ManagedConnectionClient(mediaHttp, new("https://service.example"), Guid.NewGuid(), "key", 1, key, TimeProvider.System);
+var transfer = await mediaClient.BeginMedia(relayConnection, mediaPlan);
+var complete = await mediaClient.MediaChunk(transfer.TransferId, transfer.BindingHash, 0, new byte[17]);
+if (complete.State != "Completed" || complete.CommittedBytes != 17) throw new InvalidOperationException("Packaged media contract mismatch.");
+Console.WriteLine("NuGet-only signed binary media chunk and durable binding passed.");
+
+sealed class MediaFixture(ECDsa key, Guid connection) : HttpMessageHandler
+{
+    private readonly Guid transfer = Guid.NewGuid(); private string binding = "";
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        var proof = DeploymentProofCodec.Verify(request.Headers.GetValues(ConnectionProtocol.ProofHeader).Single(), key);
+        var body = await request.Content!.ReadAsByteArrayAsync(ct);
+        if (proof.BodySha256 != DeploymentProofCodec.Hash(body) || proof.PathAndQuery != request.RequestUri!.PathAndQuery || proof.Method != "POST") throw new InvalidOperationException("Invalid media proof.");
+        ManagedMediaResult result;
+        if (request.RequestUri.AbsolutePath.EndsWith("/media", StringComparison.Ordinal))
+        { var plan = System.Text.Json.JsonSerializer.Deserialize<ManagedMediaRequest>(body, DeploymentProofCodec.Json)!; binding = plan.BindingHash(connection); result = new(transfer, binding, "Ready", 201, 0, 1); }
+        else
+        {
+            if (request.Content.Headers.ContentType?.MediaType != "application/octet-stream" || body.Length != 17 ||
+                request.RequestUri.AbsolutePath != $"/v1/media/{transfer:D}/chunks/0/{binding}") throw new InvalidOperationException("Invalid binary media range.");
+            result = new(transfer, binding, "Completed", 200, 17, 2, System.Text.Json.JsonSerializer.SerializeToElement(new { }));
+        }
+        var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = System.Net.Http.Json.JsonContent.Create(result) };
+        response.Headers.Add("X-CSweet-Connection-Protocol", ConnectionProtocol.Version); return response;
+    }
+}
 
 sealed class RelayFixture(ECDsa key, Guid connection) : HttpMessageHandler
 {
