@@ -350,7 +350,7 @@ public sealed class ManagedMediaTests
     {
         await using var f = new MediaFixture(); var (id, request) = await f.Ready(); f.Allow();
         var before = await f.Db(db => db.Connections.Select(x => x.ProtectedCredentials).SingleAsync());
-        await f.Db(async db => { await db.Database.ExecuteSqlRawAsync("DROP TABLE MediaTransfers"); await db.Database.ExecuteSqlRawAsync("DELETE FROM __ConnectionSchema WHERE Version = '0.6.0'");
+        await f.Db(async db => { await db.Database.ExecuteSqlRawAsync("DROP TABLE MediaTransfers"); await db.Database.ExecuteSqlRawAsync("DELETE FROM __ConnectionSchema WHERE Version = '0.7.0'");
             await Assert.ThrowsAsync<InvalidOperationException>(() => ConnectionSchema.RequireCurrent(db)); await ConnectionSchema.Upgrade(db); await ConnectionSchema.Upgrade(db); await ConnectionSchema.RequireCurrent(db); return 0; });
         Assert.Equal(before, await f.Db(db => db.Connections.Select(x => x.ProtectedCredentials).SingleAsync()));
         var start = await f.Client().BeginMedia(id, request); f.Clock.Advance(TimeSpan.FromHours(1));

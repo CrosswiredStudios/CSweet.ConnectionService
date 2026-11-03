@@ -5,6 +5,13 @@ using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 var proof = new DeploymentProof(Guid.NewGuid(), "key-1", "https://service.example", "GET", "/v1/events?after=0", DeploymentProofCodec.Hash(""), 100, 130, DeploymentProofCodec.Random(), 1);
 if (DeploymentProofCodec.Verify(DeploymentProofCodec.Sign(proof, key), key) != proof) throw new InvalidOperationException("Packaged protocol failed conformance.");
 Console.WriteLine($"NuGet-only connection protocol consumer: {ConnectionProtocol.Version}.");
+var adoptedConnection=Guid.NewGuid();using var adoptionHttp=new HttpClient(new AdoptionFixture(key,adoptedConnection));
+var adoptionClient=new ManagedConnectionClient(adoptionHttp,new("https://service.example"),Guid.NewGuid(),"key-1",1,key,TimeProvider.System);
+var adoptionRequest=new ConnectionAdoptionRequest(Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),new string('a',64),new string('b',64),3,new string('c',64),"synthetic-actor",Guid.NewGuid());
+var adoptionPreview=await adoptionClient.PreviewAdoption(adoptedConnection,adoptionRequest);
+var adoptionReceipt=await adoptionClient.Adopt(adoptedConnection,new(adoptionRequest,adoptionPreview.ReviewHash));
+if(adoptionReceipt.CurrentInstallationId!=adoptionRequest.TargetInstallationId || !(await adoptionClient.Adoption(adoptionRequest.AdoptionId)).Found ||
+    (await adoptionClient.CancelAdoption(adoptedConnection,adoptionRequest)).Outcome!="Adopted")throw new InvalidOperationException("Packaged adoption contract mismatch.");
 var registration = new OwnerRegistration(Guid.NewGuid(), "https://service.example", "owner", 1);
 var actor = Guid.NewGuid();
 using var http = new HttpClient(new OwnerFixture(key, registration, actor));
@@ -71,6 +78,30 @@ sealed class RelayFixture(ECDsa key, Guid connection) : HttpMessageHandler
         var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = System.Net.Http.Json.JsonContent.Create(
             new ManagedReadResult(connection, 1, ManagedExecutionBinding.Hash(connection, operation), System.Text.Json.JsonSerializer.SerializeToElement(new { }))) };
         response.Headers.Add("X-CSweet-Connection-Protocol", ConnectionProtocol.Version); return response;
+    }
+}
+
+sealed class AdoptionFixture(ECDsa key,Guid connection):HttpMessageHandler
+{
+    private ConnectionAdoptionReceipt? saved;
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken ct)
+    {
+        var proof=DeploymentProofCodec.Verify(request.Headers.GetValues(ConnectionProtocol.ProofHeader).Single(),key);
+        var bytes=request.Content is null?Array.Empty<byte>():await request.Content.ReadAsByteArrayAsync(ct);
+        if(proof.BodySha256!=DeploymentProofCodec.Hash(bytes) || proof.Method!=request.Method.Method || proof.PathAndQuery!=request.RequestUri!.PathAndQuery)
+            throw new InvalidOperationException("Invalid packaged adoption proof.");
+        object result;
+        if(request.Method==HttpMethod.Get)result=new ConnectionAdoptionStatus(saved is not null,saved);
+        else if(request.RequestUri.AbsolutePath.EndsWith("/preview",StringComparison.Ordinal))
+        {var r=System.Text.Json.JsonSerializer.Deserialize<ConnectionAdoptionRequest>(bytes,DeploymentProofCodec.Json)!;
+            result=new ConnectionAdoptionPreview(CompatibleConnectionContract.Hash(System.Text.Json.JsonSerializer.SerializeToElement(r,DeploymentProofCodec.Json)),new string('d',64),new string('e',64),3,["base"]);}
+        else if(request.RequestUri.AbsolutePath.EndsWith("/cancel",StringComparison.Ordinal))result=saved!;
+        else
+        {var a=System.Text.Json.JsonSerializer.Deserialize<ApproveConnectionAdoption>(bytes,DeploymentProofCodec.Json)!;
+            result=saved=new(a.Request.AdoptionId,connection,CompatibleConnectionContract.Hash(System.Text.Json.JsonSerializer.SerializeToElement(a.Request,DeploymentProofCodec.Json)),
+                a.ReviewHash,new string('e',64),"Adopted",4,"Ready",4,a.Request.TargetInstallationId,a.Request.TargetPackageDigest);}
+        var response=new HttpResponseMessage(System.Net.HttpStatusCode.OK){Content=System.Net.Http.Json.JsonContent.Create(result)};
+        response.Headers.Add("X-CSweet-Connection-Protocol",ConnectionProtocol.Version);return response;
     }
 }
 

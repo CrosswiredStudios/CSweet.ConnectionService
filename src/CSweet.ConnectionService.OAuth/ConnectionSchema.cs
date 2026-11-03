@@ -5,7 +5,7 @@ namespace CSweet.ConnectionService;
 /// <summary>Explicit additive SQLite upgrades. Never silently create or upgrade production storage on ordinary startup.</summary>
 public static class ConnectionSchema
 {
-    public const string Version = "0.6.0";
+    public const string Version = "0.7.0";
     public static async Task Upgrade(ConnectionStore db, CancellationToken ct = default)
     {
         await db.Database.EnsureCreatedAsync(ct);
@@ -24,6 +24,15 @@ public static class ConnectionSchema
               ValidUntil INTEGER NOT NULL, Failures INTEGER NOT NULL, LastStatus INTEGER NOT NULL, RetryAt INTEGER NULL)
             """, ct);
         await db.Database.ExecuteSqlRawAsync("CREATE UNIQUE INDEX IF NOT EXISTS IX_MediaTransfers_DeploymentId_IdempotencyHash ON MediaTransfers (DeploymentId, IdempotencyHash)", ct);
+        await db.Database.ExecuteSqlRawAsync("""
+            CREATE TABLE IF NOT EXISTS Adoptions (
+              DeploymentId TEXT NOT NULL, Id TEXT NOT NULL, ConnectionId TEXT NOT NULL,
+              RequestHash TEXT NOT NULL, RequestJson TEXT NOT NULL, ReviewHash TEXT NOT NULL, CompatibilityHash TEXT NOT NULL,
+              Outcome TEXT NOT NULL, AdoptedRevision INTEGER NOT NULL, CreatedAt TEXT NOT NULL,
+              PRIMARY KEY (DeploymentId, Id))
+            """,ct);
+        await db.Database.ExecuteSqlRawAsync("CREATE TRIGGER IF NOT EXISTS AdoptionReceiptNoUpdate BEFORE UPDATE ON Adoptions BEGIN SELECT RAISE(ABORT,'Adoption receipts are immutable'); END",ct);
+        await db.Database.ExecuteSqlRawAsync("CREATE TRIGGER IF NOT EXISTS AdoptionReceiptNoDelete BEFORE DELETE ON Adoptions BEGIN SELECT RAISE(ABORT,'Adoption receipts are immutable'); END",ct);
         var columns = new Dictionary<string, Dictionary<string, string>>
         {
             ["Profiles"] = new() { ["RevocationGroup"] = "TEXT NULL" },
@@ -70,7 +79,7 @@ public static class ConnectionSchema
         await using var command = db.Database.GetDbConnection().CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='__ConnectionSchema'";
         if (Convert.ToInt64(await command.ExecuteScalarAsync(ct)) == 0) throw new InvalidOperationException("Run --migrate-store before starting this service version.");
-        command.CommandText = "SELECT COUNT(*) FROM \"__ConnectionSchema\" WHERE \"Version\" = '0.6.0'";
+        command.CommandText = "SELECT COUNT(*) FROM \"__ConnectionSchema\" WHERE \"Version\" = '0.7.0'";
         if (Convert.ToInt64(await command.ExecuteScalarAsync(ct)) != 1) throw new InvalidOperationException("The connection store schema needs an explicit upgrade.");
     }
 }
