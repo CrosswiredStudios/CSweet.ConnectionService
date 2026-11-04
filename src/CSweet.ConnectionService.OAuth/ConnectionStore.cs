@@ -12,6 +12,14 @@ public sealed class ConnectionStore(DbContextOptions<ConnectionStore> options) :
     public DbSet<ManagedConnection> Connections => Set<ManagedConnection>(); public DbSet<ProofNonce> Nonces => Set<ProofNonce>();
     public DbSet<ConnectionEvent> Events => Set<ConnectionEvent>();
     public DbSet<ManagedMediaTransfer> MediaTransfers => Set<ManagedMediaTransfer>();
+    public DbSet<ManagedConnectionAdoption> Adoptions => Set<ManagedConnectionAdoption>();
+    private void RequireImmutableAdoptions()
+    {if(ChangeTracker.Entries<ManagedConnectionAdoption>().Any(x=>x.State is EntityState.Modified or EntityState.Deleted))
+        throw new InvalidOperationException("Adoption receipts are immutable.");}
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {RequireImmutableAdoptions();return base.SaveChanges(acceptAllChangesOnSuccess);}
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess,CancellationToken ct=default)
+    {RequireImmutableAdoptions();return base.SaveChangesAsync(acceptAllChangesOnSuccess,ct);}
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.Entity<OwnerBinding>().HasKey(x => x.Id); model.Entity<OwnerBinding>().Property(x => x.Revision).IsConcurrencyToken();
@@ -32,8 +40,22 @@ public sealed class ConnectionStore(DbContextOptions<ConnectionStore> options) :
         model.Entity<ManagedMediaTransfer>().HasKey(x => x.Id);
         model.Entity<ManagedMediaTransfer>().Property(x => x.Revision).IsConcurrencyToken();
         model.Entity<ManagedMediaTransfer>().HasIndex(x => new { x.DeploymentId, x.IdempotencyHash }).IsUnique();
+        model.Entity<ManagedConnectionAdoption>().HasKey(x=>new{x.DeploymentId,x.Id});
     }
     public void Event(Guid deploymentId, string kind, Guid? connectionId, long revision, DateTimeOffset now, Guid? sessionId = null, string? operatorSubject = null, string? target = null) => Events.Add(new() { Id = Guid.NewGuid(), DeploymentId = deploymentId, Kind = kind, ConnectionId = connectionId, Revision = revision, CreatedAt = now, SessionId = sessionId, OperatorSubject = operatorSubject, Target = target });
+}
+public sealed class ManagedConnectionAdoption
+{
+    public Guid DeploymentId {get;set;}
+    public Guid Id {get;set;}
+    public Guid ConnectionId {get;set;}
+    public string RequestHash {get;set;}="";
+    public string RequestJson {get;set;}="";
+    public string ReviewHash {get;set;}="";
+    public string CompatibilityHash {get;set;}="";
+    public string Outcome {get;set;}="";
+    public long AdoptedRevision {get;set;}
+    public DateTimeOffset CreatedAt {get;set;}
 }
 public sealed class ManagedMediaTransfer
 {
